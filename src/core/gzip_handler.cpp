@@ -180,6 +180,13 @@ std::vector<uint8_t> GzipHandler::decompress(const std::vector<uint8_t>& data) {
         
         size_t have = outBuf.size() - strm.avail_out;
         result.insert(result.end(), outBuf.begin(), outBuf.begin() + have);
+        
+        // Check for truncated data: input exhausted but stream not ended
+        if (strm.avail_in == 0 && ret != Z_STREAM_END) {
+            inflateEnd(&strm);
+            lastError_ = "Truncated gzip data";
+            return {};
+        }
     } while (ret != Z_STREAM_END);
     
     inflateEnd(&strm);
@@ -229,6 +236,13 @@ bool GzipHandler::decompressStream(
                 lastError_ = "Write callback failed";
                 return false;
             }
+        }
+        
+        // Check for truncated data: input exhausted but stream not ended
+        if (strm.avail_in == 0 && ret != Z_STREAM_END) {
+            inflateEnd(&strm);
+            lastError_ = "Truncated gzip data";
+            return false;
         }
     } while (ret != Z_STREAM_END);
     
