@@ -11,11 +11,20 @@ add_executable(lgx_tests
     test_cli.cpp
 )
 
-target_link_libraries(lgx_tests PRIVATE
-    lgx_core
-    GTest::gtest
-    GTest::gtest_main
-)
+# Link with appropriate GTest targets (handles both find_package and FetchContent)
+if(TARGET GTest::gtest)
+    target_link_libraries(lgx_tests PRIVATE
+        lgx_core
+        GTest::gtest
+        GTest::gtest_main
+    )
+else()
+    target_link_libraries(lgx_tests PRIVATE
+        lgx_core
+        gtest
+        gtest_main
+    )
+endif()
 
 # Discover tests
 gtest_discover_tests(lgx_tests)
@@ -26,11 +35,19 @@ if(LGX_BUILD_SHARED)
         test_lib.cpp
     )
     
-    target_link_libraries(lgx_lib_tests PRIVATE
-        lgx_shared
-        GTest::gtest
-        GTest::gtest_main
-    )
+    if(TARGET GTest::gtest)
+        target_link_libraries(lgx_lib_tests PRIVATE
+            lgx_shared
+            GTest::gtest
+            GTest::gtest_main
+        )
+    else()
+        target_link_libraries(lgx_lib_tests PRIVATE
+            lgx_shared
+            gtest
+            gtest_main
+        )
+    endif()
     
     gtest_discover_tests(lgx_lib_tests)
 endif()
