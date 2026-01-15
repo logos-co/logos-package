@@ -87,10 +87,6 @@ mymodule.lgx (tar.gz)
 # Create package
 lgx create mylib
 
-# Build for different platforms
-./build-linux.sh    # outputs: ./out/linux/libmylib.so
-./build-macos.sh    # outputs: ./out/macos/libmylib.dylib
-
 # Add variants
 lgx add mylib.lgx -v linux-amd64 -f ./out/linux/libmylib.so -y
 lgx add mylib.lgx -v darwin-arm64 -f ./out/macos/libmylib.dylib -y

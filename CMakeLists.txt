@@ -28,14 +28,19 @@ endif()
 
 find_package(ICU REQUIRED COMPONENTS uc i18n)
 
-# Fetch nlohmann/json (header-only)
-include(FetchContent)
-FetchContent_Declare(
-    json
-    GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG v3.11.3
-)
-FetchContent_MakeAvailable(json)
+# Try to find nlohmann_json first (for Nix and system installations)
+# Fall back to FetchContent if not found
+find_package(nlohmann_json 3.11.0 QUIET)
+if(NOT nlohmann_json_FOUND)
+    message(STATUS "nlohmann_json not found, fetching from GitHub")
+    include(FetchContent)
+    FetchContent_Declare(
+        json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.11.3
+    )
+    FetchContent_MakeAvailable(json)
+endif()
 
 # Core library
 add_library(lgx_core STATIC
