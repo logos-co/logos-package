@@ -113,9 +113,9 @@ nix build '.#lgx'
 
 The binary will be available at `./result/bin/lgx`.
 
-#### Shared Library
+#### Library
 
-To build the shared library (.so/.dylib/.dll):
+To build the library (.so/.dylib/.dll):
 
 ```bash
 nix build '.#lib'
@@ -127,8 +127,6 @@ The library will be available at:
 - `./result/lib/lgx.dll` (Windows)
 
 The C API header will be at `./result/include/lgx.h`.
-
-See [docs/lib.md](docs/lib.md) for full library API documentation.
 
 **Note:** If you haven't enabled flakes, you'll need to add the experimental features flag:
 
@@ -176,9 +174,9 @@ make -j$(nproc)
 
 The `lgx` executable will be created in the `build/` directory.
 
-#### Building the Shared Library
+#### Building the Library
 
-To build the shared library:
+To build the library:
 
 ```bash
 mkdir build
@@ -190,8 +188,6 @@ make -j$(nproc)
 This will create:
 - `build/liblgx.dylib` (macOS) or `build/liblgx.so` (Linux) or `build/lgx.dll` (Windows)
 - The C API header is at `src/lgx.h`
-
-See [docs/lib.md](docs/lib.md) for library API documentation.
 
 #### Building with Tests
 

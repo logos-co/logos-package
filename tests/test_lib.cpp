@@ -95,7 +95,7 @@ TEST_F(LibraryTest, GetPackageMetadata) {
     // Get version
     const char* version = lgx_get_version(pkg);
     ASSERT_NE(version, nullptr);
-    EXPECT_STREQ(version, "0.0.0");
+    EXPECT_STREQ(version, "0.0.1");
     
     // Get description (should be empty initially)
     const char* desc = lgx_get_description(pkg);

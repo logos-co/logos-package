@@ -91,8 +91,6 @@ if(LGX_BUILD_SHARED)
     
     set_target_properties(lgx_shared PROPERTIES
         OUTPUT_NAME "lgx"
-        VERSION ${PROJECT_VERSION}
-        SOVERSION 0
         CXX_VISIBILITY_PRESET hidden
         VISIBILITY_INLINES_HIDDEN ON
     )

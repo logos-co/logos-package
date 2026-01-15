@@ -6,7 +6,7 @@ pkgs.stdenv.mkDerivation {
   version = common.version;
   
   inherit src;
-  inherit (common) nativeBuildInputs buildInputs meta;
+  inherit (common) nativeBuildInputs buildInputs;
   
   configurePhase = ''
     runHook preConfigure
@@ -38,9 +38,8 @@ pkgs.stdenv.mkDerivation {
     # Copy the shared library
     if [ -f build/liblgx.dylib ]; then
       cp build/liblgx.dylib $out/lib/
-      cp build/liblgx.0.dylib $out/lib/ 2>/dev/null || true
     elif [ -f build/liblgx.so ]; then
-      cp build/liblgx.so* $out/lib/
+      cp build/liblgx.so $out/lib/
     elif [ -f build/lgx.dll ]; then
       cp build/lgx.dll $out/lib/
       cp build/lgx.lib $out/lib/ 2>/dev/null || true
