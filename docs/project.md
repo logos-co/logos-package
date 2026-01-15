@@ -13,10 +13,9 @@ logos-package/
 │   ├── specs_draft.md          # Draft specifications
 │   ├── specs copy.md           # Specification backup
 │   └── lib.md                  # Library documentation
-├── include/
-│   └── lgx/
-│       └── lgx.h               # Public API header
 ├── src/
+│   ├── lgx.h                   # C API header
+│   ├── lib.cpp                 # C API implementation
 │   ├── main.cpp                # CLI entry point
 │   ├── commands/               # CLI command implementations
 │   │   ├── command.cpp/h       # Base command class
@@ -36,6 +35,7 @@ logos-package/
 ├── tests/                      # Test suite
 │   ├── CMakeLists.txt          # Test build configuration
 │   ├── test_cli.cpp            # CLI command tests
+│   ├── test_lib.cpp            # C API library tests
 │   ├── test_package.cpp        # Package operation tests
 │   ├── test_manifest.cpp       # Manifest handling tests
 │   ├── test_tar_reader.cpp     # Tar reader tests
@@ -46,7 +46,8 @@ logos-package/
 │   └── example_c_usage.c       # C API usage example
 ├── nix/
 │   ├── default.nix             # Nix package definition
-│   └── bin.nix                 # Nix binary configuration
+│   ├── bin.nix                 # Nix binary configuration
+│   └── lib.nix                 # Nix library configuration
 └── build/                      # Build output (generated)
 ```
 
@@ -182,6 +183,89 @@ logos-package/
 | `hasVariant(variant) → bool` | Check if variant exists |
 | `getVariants() → set<string>` | Get all variant names |
 | `getManifest() → Manifest&` | Access manifest |
+
+## C API Library
+
+**Files:** `src/lgx.h`, `src/lib.cpp`
+
+**Purpose:** C API wrapper for cross-language interoperability. Provides a stable C interface that wraps the C++ implementation.
+
+### Building the Library
+
+The library can be built as a shared library (optional). Enable it with CMake:
+
+```bash
+cmake -DLGX_BUILD_SHARED=ON ..
+make
+```
+
+This produces:
+- `liblgx.so` on Linux
+- `liblgx.dylib` on macOS  
+- `lgx.dll` on Windows
+
+The header file `src/lgx.h` is installed to `include/` when using `make install`.
+
+### API Reference
+
+**Package Creation and Loading:**
+- `lgx_create(output_path, name) → lgx_result_t` - Create a new skeleton package
+- `lgx_load(path) → lgx_package_t` - Load an existing package from file (returns NULL on error)
+- `lgx_save(pkg, path) → lgx_result_t` - Save a package to file
+- `lgx_verify(path) → lgx_verify_result_t` - Verify a package file
+
+**Package Manipulation:**
+- `lgx_add_variant(pkg, variant, files_path, main_path) → lgx_result_t` - Add/replace variant
+- `lgx_remove_variant(pkg, variant) → lgx_result_t` - Remove a variant
+- `lgx_has_variant(pkg, variant) → bool` - Check if variant exists
+- `lgx_get_variants(pkg) → const char**` - Get NULL-terminated array of variant names (free with `lgx_free_string_array`)
+
+**Manifest Access:**
+- `lgx_get_name(pkg) → const char*` - Get package name (owned by library)
+- `lgx_get_version(pkg) → const char*` - Get package version (owned by library)
+- `lgx_set_version(pkg, version) → lgx_result_t` - Set package version
+- `lgx_get_description(pkg) → const char*` - Get package description (owned by library)
+- `lgx_set_description(pkg, description)` - Set package description
+
+**Memory Management:**
+- `lgx_free_package(pkg)` - Free a package handle
+- `lgx_free_string_array(array)` - Free string array returned by library functions
+- `lgx_free_verify_result(result)` - Free verification result structure
+
+**Error Handling:**
+- `lgx_get_last_error() → const char*` - Get the last error message (thread-local storage)
+
+**Version Info:**
+- `lgx_version() → const char*` - Get library version string (e.g., "0.1.0")
+
+### Result Types
+
+```c
+typedef struct {
+    bool success;
+    const char* error;  /* NULL if success, owned by library */
+} lgx_result_t;
+
+typedef struct {
+    bool valid;
+    const char** errors;   /* NULL-terminated array, owned by library */
+    const char** warnings; /* NULL-terminated array, owned by library */
+} lgx_verify_result_t;
+```
+
+### Usage
+
+Include the header:
+```c
+#include <lgx.h>
+```
+
+Link against the library:
+```bash
+gcc -o program program.c -llgx -L/path/to/lib -I/path/to/include
+```
+
+See `examples/example_c_usage.c` for a complete example.
 
 ## CLI Commands
 
@@ -357,6 +441,7 @@ sudo apt install cmake libicu-dev zlib1g-dev
 
 ### Building
 
+**CLI Executable:**
 ```bash
 cd logos-package
 mkdir -p build
@@ -366,6 +451,17 @@ make -j$(nproc)
 ```
 
 The `lgx` executable will be created in the `build/` directory.
+
+**Shared Library:**
+```bash
+cd logos-package
+mkdir -p build
+cd build
+cmake -DLGX_BUILD_SHARED=ON ..
+make -j$(nproc)
+```
+
+This produces `liblgx.so` (Linux), `liblgx.dylib` (macOS), or `lgx.dll` (Windows) in the `build/` directory. The C API header `src/lgx.h` is installed to `include/` when using `make install`.
 
 ### Installation
 
@@ -411,6 +507,7 @@ tar -tzf mylib.lgx
 
 ### Using the Library Programmatically
 
+**C++ API:**
 ```cpp
 #include <lgx/lgx.h>
 
@@ -444,6 +541,52 @@ if (!verifyResult.valid) {
     }
 }
 ```
+
+**C API:**
+```c
+#include <lgx.h>
+#include <stdio.h>
+
+int main(void) {
+    // Create a package
+    lgx_result_t result = lgx_create("mypackage.lgx", "mypackage");
+    if (!result.success) {
+        fprintf(stderr, "Error: %s\n", result.error);
+        return 1;
+    }
+    
+    // Load and modify
+    lgx_package_t pkg = lgx_load("mypackage.lgx");
+    if (pkg) {
+        lgx_set_version(pkg, "1.0.0");
+        lgx_set_description(pkg, "My awesome library");
+        
+        // Add a variant
+        lgx_add_variant(pkg, "linux-amd64", "./build/lib.so", "lib.so");
+        
+        // Save changes
+        lgx_save(pkg, "mypackage.lgx");
+        
+        // Cleanup
+        lgx_free_package(pkg);
+    }
+    
+    // Verify a package
+    lgx_verify_result_t verify = lgx_verify("mypackage.lgx");
+    if (!verify.valid) {
+        if (verify.errors) {
+            for (int i = 0; verify.errors[i]; i++) {
+                fprintf(stderr, "Error: %s\n", verify.errors[i]);
+            }
+        }
+    }
+    lgx_free_verify_result(verify);
+    
+    return 0;
+}
+```
+
+See `examples/example_c_usage.c` for a complete C API example.
 
 ---
 

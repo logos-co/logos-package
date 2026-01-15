@@ -21,10 +21,16 @@
           
           # Binary package
           bin = import ./nix/bin.nix { inherit pkgs common src; };
+          
+          # Library package
+          libPkg = import ./nix/lib.nix { inherit pkgs common src; };
         in
         {
           # lgx binary package
           lgx = bin;
+          
+          # lgx shared library
+          lib = libPkg;
           
           # Default package
           default = bin;

@@ -64,6 +64,47 @@ target_link_libraries(lgx_core PUBLIC
     nlohmann_json::nlohmann_json
 )
 
+# Shared library (optional)
+option(LGX_BUILD_SHARED "Build shared library" OFF)
+if(LGX_BUILD_SHARED)
+    add_library(lgx_shared SHARED
+        src/lib.cpp
+        src/core/path_normalizer.cpp
+        src/core/gzip_handler.cpp
+        src/core/tar_writer.cpp
+        src/core/tar_reader.cpp
+        src/core/manifest.cpp
+        src/core/package.cpp
+    )
+    
+    target_include_directories(lgx_shared PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    
+    target_link_libraries(lgx_shared PUBLIC
+        ZLIB::ZLIB
+        ICU::uc
+        ICU::i18n
+        nlohmann_json::nlohmann_json
+    )
+    
+    set_target_properties(lgx_shared PROPERTIES
+        OUTPUT_NAME "lgx"
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+    )
+    
+    target_compile_definitions(lgx_shared PRIVATE LGX_BUILD_SHARED)
+    
+    install(TARGETS lgx_shared
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+        RUNTIME DESTINATION bin
+    )
+    install(FILES src/lgx.h DESTINATION include)
+endif()
+
 # CLI executable
 add_executable(lgx
     src/main.cpp
@@ -81,7 +122,6 @@ target_link_libraries(lgx PRIVATE lgx_core)
 # Installation
 install(TARGETS lgx RUNTIME DESTINATION bin)
 install(TARGETS lgx_core ARCHIVE DESTINATION lib)
-install(DIRECTORY include/ DESTINATION include)
 
 # Testing (optional)
 option(LGX_BUILD_TESTS "Build tests" OFF)
