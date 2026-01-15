@@ -128,6 +128,21 @@ The library will be available at:
 
 The C API header will be at `./result/include/lgx.h`.
 
+#### Running Tests with Nix
+
+After building with `nix build '.'` or `nix build '.#all'`, run the tests:
+
+```bash
+# Run core tests (including CLI integration tests)
+export LGX_BINARY="$(pwd)/result/bin/lgx"
+./result/bin/lgx_tests
+
+# Run library API tests
+./result/bin/lgx_lib_tests
+```
+
+**Note:** The `LGX_BINARY` environment variable tells the CLI tests where to find the `lgx` binary. Without it, the CLI integration tests will be skipped (though all other tests will still run).
+
 **Note:** If you haven't enabled flakes, you'll need to add the experimental features flag:
 
 ```bash

@@ -47,7 +47,8 @@ logos-package/
 ├── nix/
 │   ├── default.nix             # Nix package definition
 │   ├── bin.nix                 # Nix binary configuration
-│   └── lib.nix                 # Nix library configuration
+│   ├── lib.nix                 # Nix library configuration
+│   └── all.nix                 # Nix all-in-one package (binary + library + tests)
 └── build/                      # Build output (generated)
 ```
 
@@ -60,6 +61,8 @@ logos-package/
 | **zlib** | Gzip compression/decompression |
 | **ICU** | Unicode NFC normalization |
 | **nlohmann/json** | JSON parsing and serialization |
+| **Google Test** | Unit testing framework (optional, for tests) |
+| **Nix** | Package management and reproducible builds |
 
 ## Core Modules
 
@@ -188,7 +191,7 @@ logos-package/
 
 **Files:** `src/lgx.h`, `src/lib.cpp`
 
-**Purpose:** C API wrapper for cross-language interoperability. Provides a stable C interface that wraps the C++ implementation.
+**Purpose:** C API wrapper for cross-language interoperability. Useful for using this lib in other projects.
 
 ### Building the Library
 
@@ -422,12 +425,76 @@ lgx publish <pkg.lgx>
 
 ## Operational
 
-### Prerequisites
+###  Nix (recommended)
+
+Nix provides reproducible builds with all dependencies managed automatically.
+
+**Building CLI Executable Only:**
+
+To build just the `lgx` CLI binary:
+
+```bash
+nix build '.#lgx'
+```
+
+The binary will be available at `result/bin/lgx`.
+
+**Building Shared Library Only:**
+
+To build just the shared library and C API header:
+
+```bash
+nix build '.#lib'
+```
+
+This produces:
+- `result/lib/liblgx.so` (Linux)
+- `result/lib/liblgx.dylib` (macOS)
+- `result/lib/lgx.dll` (Windows)
+- `result/include/lgx.h` (C API header)
+
+**Building Everything (Binary + Library + Tests):**
+
+To build the CLI binary, shared library, and all test executables together:
+
+```bash
+nix build '.#all'
+```
+
+This is the default package and includes:
+- `result/bin/lgx` - CLI executable
+- `result/lib/liblgx.so` (or `.dylib`/`.dll`) - Shared library
+- `result/include/lgx.h` - C API header
+- `result/bin/lgx_tests` - Core test suite
+- `result/bin/lgx_lib_tests` - Library API tests
+
+**Running Tests with Nix:**
+
+When building with `nix build '.#all'`, tests are automatically run during the build process. To run tests manually after building:
+
+```bash
+# Build everything including tests
+nix build '.#all'
+
+# Run core tests (including CLI integration tests)
+export LGX_BINARY="$(pwd)/result/bin/lgx"
+./result/bin/lgx_tests
+
+# Run library API tests
+./result/bin/lgx_lib_tests
+```
+
+**Note:** The `LGX_BINARY` environment variable tells the CLI tests where to find the `lgx` binary. Without it, the CLI integration tests will be skipped (though all other tests will still run).
+
+### CMake
+
+**Prerequisites:**
 
 - CMake 3.16 or higher
 - C++17 compatible compiler (GCC 8+, Clang 7+, MSVC 2019+)
 - zlib development libraries
 - ICU development libraries
+- Google Test (optional, only required if building tests)
 
 **macOS (Homebrew):**
 ```bash
@@ -439,9 +506,12 @@ brew install cmake icu4c
 sudo apt install cmake libicu-dev zlib1g-dev
 ```
 
-### Building
+CMake provides traditional build system support for development and integration.
 
-**CLI Executable:**
+**Building CLI Executable Only:**
+
+To build just the `lgx` CLI binary:
+
 ```bash
 cd logos-package
 mkdir -p build
@@ -452,7 +522,10 @@ make -j$(nproc)
 
 The `lgx` executable will be created in the `build/` directory.
 
-**Shared Library:**
+**Building Shared Library Only:**
+
+To build just the shared library:
+
 ```bash
 cd logos-package
 mkdir -p build
@@ -463,21 +536,67 @@ make -j$(nproc)
 
 This produces `liblgx.so` (Linux), `liblgx.dylib` (macOS), or `lgx.dll` (Windows) in the `build/` directory. The C API header `src/lgx.h` is installed to `include/` when using `make install`.
 
-### Installation
+**Building with Tests:**
+
+To build the CLI binary, shared library, and test executables:
+
+```bash
+cd logos-package
+mkdir -p build
+cd build
+cmake -DLGX_BUILD_TESTS=ON -DLGX_BUILD_SHARED=ON ..
+make -j$(nproc)
+```
+
+This builds:
+- `build/lgx` - CLI executable
+- `build/liblgx.so` (or `.dylib`/`.dll`) - Shared library
+- `build/tests/lgx_tests` - Core test suite
+- `build/tests/lgx_lib_tests` - Library API tests
+
+**Running Tests with CMake:**
+
+Tests are built using Google Test and can be run via CMake's CTest or directly:
+
+```bash
+cd build
+ctest --output-on-failure
+```
+
+Or run test executables directly:
+
+```bash
+# Core tests (including CLI integration tests)
+./build/tests/lgx_tests
+
+# Library API tests (requires shared library build)
+./build/tests/lgx_lib_tests
+```
+
+**CLI Integration Tests:**
+
+The CLI tests (`test_cli.cpp`) require the `lgx` binary to be available. They will:
+1. Check for `LGX_BINARY` environment variable first
+2. Search common locations (build directory, parent directories)
+3. Skip if binary is not found
+
+To run CLI tests explicitly:
+
+```bash
+export LGX_BINARY="$(pwd)/build/lgx"
+./build/tests/lgx_tests
+```
+
+**Installation:**
+
+To install the built binaries and libraries system-wide:
 
 ```bash
 cd build
 sudo make install
 # Installs lgx to /usr/local/bin
-```
-
-### Running Tests
-
-(Tests not yet implemented)
-
-```bash
-cd build
-ctest
+# Installs liblgx to /usr/local/lib (if built with -DLGX_BUILD_SHARED=ON)
+# Installs lgx.h to /usr/local/include (if built with -DLGX_BUILD_SHARED=ON)
 ```
 
 ---
@@ -506,41 +625,6 @@ tar -tzf mylib.lgx
 ```
 
 ### Using the Library Programmatically
-
-**C++ API:**
-```cpp
-#include <lgx/lgx.h>
-
-// Create a package
-auto result = lgx::Package::create("mypackage.lgx", "mypackage");
-if (!result.success) {
-    std::cerr << "Error: " << result.error << std::endl;
-    return 1;
-}
-
-// Load and modify
-auto pkgOpt = lgx::Package::load("mypackage.lgx");
-if (pkgOpt) {
-    auto& pkg = *pkgOpt;
-    
-    // Add a variant
-    pkg.addVariant("linux-amd64", "./build/lib.so");
-    
-    // Access manifest
-    pkg.getManifest().description = "My awesome library";
-    
-    // Save changes
-    pkg.save("mypackage.lgx");
-}
-
-// Verify a package
-auto verifyResult = lgx::Package::verify("mypackage.lgx");
-if (!verifyResult.valid) {
-    for (const auto& err : verifyResult.errors) {
-        std::cerr << "Error: " << err << std::endl;
-    }
-}
-```
 
 **C API:**
 ```c
@@ -586,15 +670,11 @@ int main(void) {
 }
 ```
 
-See `examples/example_c_usage.c` for a complete C API example.
-
----
-
 ## Other
 
 ### Known Issues
 
-1. **Deterministic JSON not fully specified** - The exact canonical JSON format (whitespace, key ordering, escaping) is not yet locked down. Current implementation uses nlohmann/json's default pretty-print with 2-space indent.
+1. **Deterministic JSON not fully specified** - (note: TBC) The exact canonical JSON format (whitespace, key ordering, escaping) is not yet locked down. Current implementation uses nlohmann/json's default pretty-print with 2-space indent. Without canonical JSON, different serializers can emit different bytes for the same data (key order/whitespace/escaping), which breaks reproducible archives and any future signing/hashing over `manifest.json`. This breaks the core requirement that identical package contents must produce byte-identical package files, which is essential for reproducibility, caching, and security verification via content hashes.
 
 ### Future Improvements
 

@@ -24,6 +24,9 @@
           
           # Library package
           libPkg = import ./nix/lib.nix { inherit pkgs common src; };
+          
+          # Combined package (binary + library + tests)
+          allPkg = import ./nix/all.nix { inherit pkgs common src; };
         in
         {
           # lgx binary package
@@ -32,8 +35,11 @@
           # lgx shared library
           lib = libPkg;
           
+          # lgx all-in-one package (binary, library, and tests)
+          all = allPkg;
+          
           # Default package
-          default = bin;
+          default = allPkg;
         }
       );
 

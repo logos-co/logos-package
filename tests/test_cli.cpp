@@ -15,17 +15,32 @@ protected:
         tempDir = fs::temp_directory_path() / ("lgx_cli_test_" + std::to_string(rand()));
         fs::create_directories(tempDir);
         
-        // Find the lgx binary - look in parent directory (tests are in tests/ subdir)
-        lgxBinary = fs::current_path().parent_path() / "lgx";
-        if (!fs::exists(lgxBinary)) {
-            // Try current directory (in case running from build root)
-            lgxBinary = fs::current_path() / "lgx";
+        // Check for LGX_BINARY environment variable first
+        const char* envBinary = std::getenv("LGX_BINARY");
+        if (envBinary && fs::exists(envBinary)) {
+            lgxBinary = envBinary;
+            return;
         }
-        if (!fs::exists(lgxBinary)) {
-            GTEST_SKIP() << "lgx binary not found. Tried: " 
-                         << (fs::current_path().parent_path() / "lgx") 
-                         << " and " << (fs::current_path() / "lgx");
+        
+        // Find the lgx binary - try multiple locations
+        std::vector<fs::path> searchPaths = {
+            fs::current_path().parent_path() / "lgx",        // Running from tests/ subdir
+            fs::current_path() / "lgx",                       // Running from build root
+            fs::current_path() / "build" / "lgx",            // Running from project root
+            fs::current_path().parent_path() / "build" / "lgx" // Running from build/tests
+        };
+        
+        for (const auto& path : searchPaths) {
+            if (fs::exists(path)) {
+                lgxBinary = path;
+                return;
+            }
         }
+        
+        // Binary not found, skip tests
+        GTEST_SKIP() << "lgx binary not found. Set LGX_BINARY env var or tried: " 
+                     << searchPaths[0] << ", " << searchPaths[1] << ", " 
+                     << searchPaths[2] << ", " << searchPaths[3];
     }
     
     void TearDown() override {
