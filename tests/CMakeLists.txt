@@ -8,6 +8,7 @@ add_executable(lgx_tests
     test_tar_reader.cpp
     test_manifest.cpp
     test_package.cpp
+    test_cli.cpp
 )
 
 target_link_libraries(lgx_tests PRIVATE
