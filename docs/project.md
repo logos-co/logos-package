@@ -9,10 +9,8 @@ logos-package/
 ├── flake.nix                   # Nix flake configuration
 ├── flake.lock                  # Nix flake lock file
 ├── docs/
-│   ├── specs.md                # This specification
-│   ├── specs_draft.md          # Draft specifications
-│   ├── specs copy.md           # Specification backup
-│   └── lib.md                  # Library documentation
+│   ├── project.md              # This specification
+│   ├── specs.md                # High level specification
 ├── src/
 │   ├── lgx.h                   # C API header
 │   ├── lib.cpp                 # C API implementation
