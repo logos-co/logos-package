@@ -101,26 +101,71 @@ tar -tzf mylib.lgx
 
 ## Building
 
-### Prerequisites
+### Nix (Recommended)
+
+The recommended way to build `lgx` is using Nix, which automatically handles all dependencies:
+
+#### Binary
+
+```bash
+nix build '.#lgx'
+```
+
+The binary will be available at `./result/bin/lgx`.
+
+#### Shared Library
+
+To build the shared library (.so/.dylib/.dll):
+
+```bash
+nix build '.#lib'
+```
+
+The library will be available at:
+- `./result/lib/liblgx.dylib` (macOS)
+- `./result/lib/liblgx.so` (Linux)
+- `./result/lib/lgx.dll` (Windows)
+
+The C API header will be at `./result/include/lgx.h`.
+
+See [docs/lib.md](docs/lib.md) for full library API documentation.
+
+**Note:** If you haven't enabled flakes, you'll need to add the experimental features flag:
+
+```bash
+nix --extra-experimental-features "nix-command flakes" build '.#lgx'
+```
+
+Or enable flakes permanently in your Nix configuration by adding to `~/.config/nix/nix.conf`:
+
+```
+experimental-features = nix-command flakes
+```
+
+### CMake
+
+If you prefer not to use Nix, you can build with CMake directly.
+
+#### Prerequisites
 
 - CMake 3.16+
 - C++17 compiler (GCC 8+, Clang 7+, MSVC 2019+)
 - zlib
 - ICU
 
-#### macOS (Homebrew)
+##### macOS (Homebrew)
 
 ```bash
 brew install cmake icu4c
 ```
 
-#### Ubuntu/Debian
+##### Ubuntu/Debian
 
 ```bash
 sudo apt install cmake libicu-dev zlib1g-dev
 ```
 
-### Building
+#### Building
 
 ```bash
 mkdir build
@@ -131,12 +176,36 @@ make -j$(nproc)
 
 The `lgx` executable will be created in the `build/` directory.
 
+#### Building the Shared Library
+
+To build the shared library:
+
+```bash
+mkdir build
+cd build
+cmake .. -DLGX_BUILD_SHARED=ON
+make -j$(nproc)
+```
+
+This will create:
+- `build/liblgx.dylib` (macOS) or `build/liblgx.so` (Linux) or `build/lgx.dll` (Windows)
+- The C API header is at `src/lgx.h`
+
+See [docs/lib.md](docs/lib.md) for library API documentation.
+
 #### Building with Tests
 
 ```bash
 mkdir build
 cd build
 cmake .. -DLGX_BUILD_TESTS=ON
+make -j$(nproc)
+```
+
+To also test the library:
+
+```bash
+cmake .. -DLGX_BUILD_TESTS=ON -DLGX_BUILD_SHARED=ON
 make -j$(nproc)
 ```
 
