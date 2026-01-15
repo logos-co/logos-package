@@ -7,7 +7,7 @@ LGX is a deterministic package format for distributing multi-platform artifacts.
 The format is designed to:
 - Support multiple platform variants (e.g., `linux-amd64`, `darwin-arm64`) in a single package
 - Produce byte-identical archives given identical inputs (deterministic)
-- Ensure cross-platform path compatibility through Unicode normalization
+- Ensure cross-platform path compatibility through Unicode NFC normalization (macOS often uses decomposed forms; Linux commonly uses composed - NFC avoids "same name, different bytes" breaking lookups, hashing, and determinism)
 - Enforce a strict, predictable internal structure
 - Provide tooling for creating, modifying, and validating packages
 
@@ -27,7 +27,7 @@ The format is designed to:
 
 ### Package Structure
 
-An LGX package (`.lgx` file) is a gzip-compressed tar archive with the following structure:
+An LGX package (`.lgx` file) is a gzip-compressed tar archive with the following structure. Gzip is used because it's the most universally supported compression with stable tooling on every OS, providing the simplest default for "any platform can unpack".
 
 ```
 package.lgx (tar.gz)
@@ -48,6 +48,7 @@ package.lgx (tar.gz)
 - Only `manifest.json`, `manifest.cose`, `variants/`, `docs/`, and `licenses/` are permitted at root
 - Any other root entries cause validation failure
 - Files directly under `variants/` are forbidden (only directories allowed)
+- This strict structure keeps packages easy to validate and reduces ambiguity
 
 ### Manifest Schema
 
@@ -72,17 +73,19 @@ The manifest is a UTF-8 encoded JSON file with the following required fields:
 
 **Field Constraints:**
 
-| Field | Type | Constraints |
-|-------|------|-------------|
-| `manifestVersion` | string | Semver format; tooling rejects unsupported major versions |
-| `name` | string | Canonical lowercase; auto-normalized by tooling |
-| `version` | string | Package version (semver recommended) |
-| `description` | string | Human-readable description |
-| `author` | string | Author/maintainer name |
-| `type` | string | Package type classification |
-| `category` | string | Package category |
-| `dependencies` | array | List of dependency strings |
-| `main` | object | Map of variant name → relative path to entry point (e.g ) `"linux-amd64": "path/to/main.so"` means `linux-amd64/path/to/main.so` |
+| Field | Type | Constraints | Purpose |
+|-------|------|-------------|---------|
+| `manifestVersion` | string | Semver format; tooling rejects unsupported major versions | Version compatibility |
+| `name` | string | Canonical lowercase; auto-normalized by tooling | Package identity |
+| `version` | string | Package version (semver recommended) | Package identity |
+| `description` | string | Human-readable description | Human metadata |
+| `author` | string | Author/maintainer name | Human metadata |
+| `type` | string | Package type classification | Classification |
+| `category` | string | Package category | Classification |
+| `dependencies` | array | List of dependency strings | Runtime needs |
+| `main` | object | Map of variant name → relative path to entry point (e.g ) `"linux-amd64": "path/to/main.so"` means `linux-amd64/path/to/main.so` | Entry point resolution |
+
+All fields are required to ensure consistent metadata for hosts/registries and applications.
 
 **Main Entry Constraints:**
 - Keys must be lowercase (auto-normalized)
@@ -92,7 +95,7 @@ The manifest is a UTF-8 encoded JSON file with the following required fields:
 
 ### Variant Structure
 
-- Variant names are user-defined strings, stored in lowercase
+- Variant names are user-defined strings, stored in lowercase (case-insensitive behavior avoids Windows/macOS filesystem quirks and human typos; canonical lowercase makes matching deterministic)
 - Variant directories contain platform-specific files
 - The directory structure within a variant is preserved from source
 
@@ -100,6 +103,7 @@ The manifest is a UTF-8 encoded JSON file with the following required fields:
 - Every variant directory must have a corresponding `main` entry
 - Every `main` entry must have a corresponding variant directory
 - No extras on either side (bidirectional completeness)
+- This ensures installers don't have to guess entrypoints: every variant is loadable, and the manifest can't reference missing content
 
 ## Features & Requirements
 
@@ -109,7 +113,7 @@ LGX packages must be deterministic - identical inputs must produce byte-identica
 
 **Tar Determinism:**
 - Entries sorted lexicographically by NFC-normalized path bytes
-- Fixed metadata: `uid=0`, `gid=0`, `uname=""`, `gname=""`
+- Fixed metadata: `uid=0`, `gid=0`, `uname=""`, `gname=""` (tar headers include uid/gid/mtime/mode; normalizing them prevents host-specific differences from changing checksums)
 - Fixed timestamps: `mtime=0`
 - Fixed permissions: directories `0755`, files `0644`
 - USTAR format
@@ -118,6 +122,7 @@ LGX packages must be deterministic - identical inputs must produce byte-identica
 - Header mtime = 0
 - No original filename in header
 - Fixed OS byte (0xFF = unknown)
+- Gzip headers can embed timestamps/filenames/OS markers; zeroing them prevents two builds from differing despite identical content
 
 ### Path Safety Rules
 
@@ -133,6 +138,8 @@ All archive paths must satisfy:
 - Hardlinks
 - Device nodes
 - FIFOs
+
+These are forbidden for portability and security: links can escape variant roots or behave differently on extract; special files are unsafe/meaningless for plugins.
 
 ### Package Creation Workflow
 
@@ -171,7 +178,7 @@ lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [-y]
    - If variant exists and will be replaced
    - If `main[variant]` would change (even if variant doesn't exist yet)
    - If both variant exists and `main` would change
-7. **Replace** entire variant directory (no merging)
+7. **Replace** entire variant directory (no merging - a variant is treated as an atomic build output; merge risks stale leftovers and hard-to-debug installs)
 8. Copy files/directory to `variants/<variant>/`
    - Single file: `variants/<variant>/<filename>`
    - Directory: `variants/<variant>/<dirname>/...`
