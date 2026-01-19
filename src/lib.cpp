@@ -81,12 +81,11 @@ LGX_EXPORT lgx_result_t lgx_create(const char* output_path, const char* name) {
     clear_error();
     auto result = lgx::Package::create(output_path, name);
     
-    if (result.success) {
-        return {true, nullptr};
-    } else {
+    if (!result.success) {
         set_error(result.error);
         return {false, g_last_error.c_str()};
     }
+    return {true, nullptr};
 }
 
 LGX_EXPORT lgx_package_t lgx_load(const char* path) {
@@ -117,12 +116,11 @@ LGX_EXPORT lgx_result_t lgx_save(lgx_package_t pkg, const char* path) {
     clear_error();
     auto result = pkg->pkg->save(path);
     
-    if (result.success) {
-        return {true, nullptr};
-    } else {
+    if (!result.success) {
         set_error(result.error);
         return {false, g_last_error.c_str()};
     }
+    return {true, nullptr};
 }
 
 LGX_EXPORT lgx_verify_result_t lgx_verify(const char* path) {
@@ -159,12 +157,11 @@ LGX_EXPORT lgx_result_t lgx_add_variant(
     std::optional<std::string> main_opt = main_path ? std::optional<std::string>(main_path) : std::nullopt;
     auto result = pkg->pkg->addVariant(variant, files_path, main_opt);
     
-    if (result.success) {
-        return {true, nullptr};
-    } else {
+    if (!result.success) {
         set_error(result.error);
         return {false, g_last_error.c_str()};
     }
+    return {true, nullptr};
 }
 
 LGX_EXPORT lgx_result_t lgx_remove_variant(lgx_package_t pkg, const char* variant) {
@@ -176,12 +173,33 @@ LGX_EXPORT lgx_result_t lgx_remove_variant(lgx_package_t pkg, const char* varian
     clear_error();
     auto result = pkg->pkg->removeVariant(variant);
     
-    if (result.success) {
-        return {true, nullptr};
-    } else {
+    if (!result.success) {
         set_error(result.error);
         return {false, g_last_error.c_str()};
     }
+    return {true, nullptr};
+}
+
+LGX_EXPORT lgx_result_t lgx_extract(lgx_package_t pkg, const char* variant, const char* output_dir) {
+    if (!pkg || !output_dir) {
+        set_error("Invalid arguments: pkg and output_dir cannot be NULL");
+        return {false, g_last_error.c_str()};
+    }
+    
+    clear_error();
+    lgx::Package::Result result;
+    
+    if (variant) {
+        result = pkg->pkg->extractVariant(variant, output_dir);
+    } else {
+        result = pkg->pkg->extractAll(output_dir);
+    }
+    
+    if (!result.success) {
+        set_error(result.error);
+        return {false, g_last_error.c_str()};
+    }
+    return {true, nullptr};
 }
 
 LGX_EXPORT bool lgx_has_variant(lgx_package_t pkg, const char* variant) {

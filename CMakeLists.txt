@@ -112,6 +112,7 @@ add_executable(lgx
     src/commands/create_command.cpp
     src/commands/add_command.cpp
     src/commands/remove_command.cpp
+    src/commands/extract_command.cpp
     src/commands/verify_command.cpp
     src/commands/sign_command.cpp
     src/commands/publish_command.cpp

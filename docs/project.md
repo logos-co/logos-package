@@ -20,6 +20,7 @@ logos-package/
 │   │   ├── create_command.cpp/h
 │   │   ├── add_command.cpp/h
 │   │   ├── remove_command.cpp/h
+│   │   ├── extract_command.cpp/h
 │   │   ├── verify_command.cpp/h
 │   │   ├── sign_command.cpp/h
 │   │   └── publish_command.cpp/h
@@ -184,6 +185,8 @@ logos-package/
 | `verify(path) → VerifyResult` | Validate package against spec |
 | `addVariant(variant, filesPath, mainPath) → Result` | Add/replace variant |
 | `removeVariant(variant) → Result` | Remove variant |
+| `extractVariant(variant, outputDir) → Result` | Extract variant to directory |
+| `extractAll(outputDir) → Result` | Extract all variants to directory |
 | `hasVariant(variant) → bool` | Check if variant exists |
 | `getVariants() → set<string>` | Get all variant names |
 | `getManifest() → Manifest&` | Access manifest |
@@ -221,6 +224,7 @@ The header file `src/lgx.h` is installed to `include/` when using `make install`
 **Package Manipulation:**
 - `lgx_add_variant(pkg, variant, files_path, main_path) → lgx_result_t` - Add/replace variant
 - `lgx_remove_variant(pkg, variant) → lgx_result_t` - Remove a variant
+- `lgx_extract(pkg, variant, output_dir) → lgx_result_t` - Extract variant(s) to directory (variant=NULL extracts all)
 - `lgx_has_variant(pkg, variant) → bool` - Check if variant exists
 - `lgx_get_variants(pkg) → const char**` - Get NULL-terminated array of variant names (free with `lgx_free_string_array`)
 
@@ -342,6 +346,34 @@ lgx remove <pkg.lgx> --variant <v> [-y/--yes]
 lgx remove mymodule.lgx --variant linux-amd64
 ```
 
+### lgx extract
+
+Extract variant contents from a package.
+
+```
+lgx extract <pkg.lgx> [--variant <v>] [--output <dir>]
+```
+
+**Arguments:**
+- `pkg.lgx` - Path to package file
+- `--variant, -v` - (Optional) Variant name to extract (extracts all if omitted)
+- `--output, -o` - (Optional) Output directory (defaults to current directory)
+
+**Output Structure:**
+- Each variant is extracted to `<output>/<variant-name>/`
+
+**Examples:**
+```bash
+# Extract all variants to current directory
+lgx extract mymodule.lgx
+
+# Extract specific variant
+lgx extract mymodule.lgx --variant linux-amd64
+
+# Extract to specific directory
+lgx extract mymodule.lgx -v web -o ./extracted
+```
+
 ### lgx verify
 
 Validate a package against the specification.
@@ -417,11 +449,16 @@ lgx publish <pkg.lgx>
    lgx verify mymodule.lgx
    → Validates structure, manifest, completeness
 
-4. DISTRIBUTE
-   (share mymodule.lgx)
+4. EXTRACT (for consumption)
+   lgx extract mymodule.lgx --variant linux-amd64 --output ./extracted
+   ┌──────────────────────────────┐
+   │ ./extracted/                 │
+   │ └─linux-amd64/               │
+   │   └─lib.so                   │
+   └──────────────────────────────┘
 
-5. CONSUME
-   (extract and use variant-specific files)
+5. DISTRIBUTE
+   (share mymodule.lgx)
 ```
 
 ## Operational
@@ -691,7 +728,6 @@ The workflow configuration is in `.github/workflows/ci.yml`.
 
 1. **Signature support** - Implement COSE signatures via `manifest.cose`
 2. **Registry integration** - Implement `lgx publish` with future package manager & registry
-3. **Extraction command** - Add `lgx extract <pkg.lgx> [--variant <v>] [--output <dir>]`
-4. **List command** - Add `lgx list <pkg.lgx>` to show package contents
-5. **Info command** - Add `lgx info <pkg.lgx>` to show manifest details
-6. **Deterministic JSON** - Adopt RFC 8785 (JCS) or define canonical format
+3. **List command** - Add `lgx list <pkg.lgx>` to show package contents
+4. **Info command** - Add `lgx info <pkg.lgx>` to show manifest details
+5. **Deterministic JSON** - Adopt RFC 8785 (JCS) or define canonical format

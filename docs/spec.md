@@ -215,6 +215,32 @@ lgx remove <pkg.lgx> -v <v> [-y]
 - `-v` for `--variant`
 - `-y` for `--yes`
 
+### Variant Extraction Workflow
+
+```
+lgx extract <pkg.lgx> [--variant <v>] [--output <dir>]
+```
+
+1. Verify package file exists; if not, exit with error
+2. Load existing package
+3. If `--variant` specified:
+   - Normalize variant name to lowercase
+   - Verify variant exists; if not, exit with error
+   - Extract variant contents to `<output>/<variant>/`
+4. If `--variant` not specified:
+   - Extract all variants to `<output>/<variant>/` for each variant
+5. Create directories as needed
+6. Write files preserving internal directory structure
+
+**Output Structure:**
+- Each variant is extracted to `<output>/<variant-name>/`
+- The internal variant structure (from `variants/<variant>/`) is preserved
+- For example, `variants/linux-amd64/lib.so` extracts to `<output>/linux-amd64/lib.so`
+
+**Option Aliases:**
+- `-v` for `--variant`
+- `-o` for `--output`
+
 ### Verification Workflow
 
 ```
