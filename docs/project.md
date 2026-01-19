@@ -47,6 +47,9 @@ logos-package/
 │   ├── bin.nix                 # Nix binary configuration
 │   ├── lib.nix                 # Nix library configuration
 │   └── all.nix                 # Nix all-in-one package (binary + library + tests)
+├── .github/
+│   └── workflows/
+│       └── ci.yml              # GitHub Actions CI workflow
 └── build/                      # Build output (generated)
 ```
 
@@ -669,6 +672,16 @@ int main(void) {
 ```
 
 ## Other
+
+### Continuous Integration
+
+The project uses GitHub Actions for automated testing. On every push or pull request to the `master` branch:
+
+1. The project is built using Nix (`nix build`)
+2. Core tests are run (`lgx_tests`)
+3. Library API tests are run (`lgx_lib_tests`)
+
+The workflow configuration is in `.github/workflows/ci.yml`.
 
 ### Known Issues
 
