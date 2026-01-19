@@ -60,6 +60,7 @@ tar -tzf mymodule.lgx
 | `lgx create <name>` | Create a new skeleton package |
 | `lgx add <pkg> --variant <v> --files <path> [--main <relpath>] [-y]` | Add files to a variant |
 | `lgx remove <pkg> --variant <v> [-y]` | Remove a variant |
+| `lgx extract <pkg> [--variant <v>] [--output <dir>]` | Extract variant contents |
 | `lgx verify <pkg>` | Validate package structure |
 | `lgx sign <pkg>` | Sign package (TODO) |
 | `lgx publish <pkg>` | Publish package (TODO) |
@@ -96,6 +97,9 @@ lgx verify mylib.lgx
 
 # Inspect
 tar -tzf mylib.lgx
+
+# Extract for use
+lgx extract mylib.lgx --variant linux-amd64 --output ./extracted
 ```
 
 

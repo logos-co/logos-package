@@ -511,3 +511,146 @@ TEST_F(PackageTest, VariantName_CaseNormalization) {
     EXPECT_TRUE(variants.count("linux-amd64") > 0);
     EXPECT_TRUE(variants.count("Linux-AMD64") == 0);  // Not stored as mixed case
 }
+
+// =============================================================================
+// Extract Variant Tests
+// =============================================================================
+
+TEST_F(PackageTest, ExtractVariant_SingleFile) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+    
+    fs::path testFile = tempDir / "lib.so";
+    createTestFile(testFile, "library content");
+    
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->addVariant("linux-amd64", testFile);
+    pkg->save(pkgPath);
+    
+    pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    
+    fs::path extractDir = tempDir / "extracted";
+    auto result = pkg->extractVariant("linux-amd64", extractDir);
+    
+    EXPECT_TRUE(result.success) << result.error;
+    
+    fs::path extractedFile = extractDir / "linux-amd64" / "lib.so";
+    EXPECT_TRUE(fs::exists(extractedFile)) << "Expected: " << extractedFile.string();
+    
+    std::ifstream file(extractedFile);
+    std::string content((std::istreambuf_iterator<char>(file)),
+                         std::istreambuf_iterator<char>());
+    EXPECT_EQ(content, "library content");
+}
+
+TEST_F(PackageTest, ExtractVariant_Directory) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+    
+    fs::path testDir = tempDir / "dist";
+    createTestDirectory(testDir, {
+        {"index.js", "console.log('hello')"},
+        {"lib.js", "export {}"}
+    });
+    
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->addVariant("web", testDir, "dist/index.js");
+    pkg->save(pkgPath);
+    
+    pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    
+    fs::path extractDir = tempDir / "extracted";
+    auto result = pkg->extractVariant("web", extractDir);
+    
+    EXPECT_TRUE(result.success) << result.error;
+    
+    EXPECT_TRUE(fs::exists(extractDir / "web" / "dist" / "index.js"));
+    EXPECT_TRUE(fs::exists(extractDir / "web" / "dist" / "lib.js"));
+}
+
+TEST_F(PackageTest, ExtractVariant_NonExistent) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+    
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    
+    fs::path extractDir = tempDir / "extracted";
+    auto result = pkg->extractVariant("nonexistent", extractDir);
+    
+    EXPECT_FALSE(result.success);
+    EXPECT_FALSE(result.error.empty());
+}
+
+TEST_F(PackageTest, ExtractAll_MultipleVariants) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+    
+    fs::path file1 = tempDir / "lib1.so";
+    fs::path file2 = tempDir / "lib2.dylib";
+    createTestFile(file1, "content1");
+    createTestFile(file2, "content2");
+    
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->addVariant("linux-amd64", file1);
+    pkg->addVariant("darwin-arm64", file2);
+    pkg->save(pkgPath);
+    
+    pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    
+    fs::path extractDir = tempDir / "extracted";
+    auto result = pkg->extractAll(extractDir);
+    
+    EXPECT_TRUE(result.success) << result.error;
+    
+    EXPECT_TRUE(fs::exists(extractDir / "linux-amd64" / "lib1.so"));
+    EXPECT_TRUE(fs::exists(extractDir / "darwin-arm64" / "lib2.dylib"));
+    
+    std::ifstream f1(extractDir / "linux-amd64" / "lib1.so");
+    std::string c1((std::istreambuf_iterator<char>(f1)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(c1, "content1");
+    
+    std::ifstream f2(extractDir / "darwin-arm64" / "lib2.dylib");
+    std::string c2((std::istreambuf_iterator<char>(f2)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(c2, "content2");
+}
+
+TEST_F(PackageTest, ExtractAll_EmptyPackage) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+    
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    
+    fs::path extractDir = tempDir / "extracted";
+    auto result = pkg->extractAll(extractDir);
+    
+    EXPECT_TRUE(result.success);
+}
+
+TEST_F(PackageTest, ExtractVariant_CaseInsensitive) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+    
+    fs::path file = tempDir / "lib.so";
+    createTestFile(file, "content");
+    
+    auto pkg = Package::load(pkgPath);
+    pkg->addVariant("Linux-AMD64", file);
+    pkg->save(pkgPath);
+    
+    pkg = Package::load(pkgPath);
+    
+    fs::path extractDir = tempDir / "extracted";
+    
+    auto result = pkg->extractVariant("LINUX-AMD64", extractDir);
+    EXPECT_TRUE(result.success) << result.error;
+    
+    EXPECT_TRUE(fs::exists(extractDir / "linux-amd64" / "lib.so"));
+}

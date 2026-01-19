@@ -527,4 +527,73 @@ std::vector<std::string> Package::getRequiredDirectories(const std::string& path
     return dirs;
 }
 
+Package::Result Package::extractVariant(
+    const std::string& variant,
+    const std::filesystem::path& outputDir
+) const {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    
+    std::string variantLc = PathNormalizer::toLowercase(variant);
+    
+    if (!hasVariant(variantLc)) {
+        return Result::fail("Variant does not exist: " + variant);
+    }
+    
+    fs::path variantOutputDir = outputDir / variantLc;
+    
+    std::string prefix = "variants/" + variantLc + "/";
+    
+    for (const auto& entry : entries_) {
+        if (entry.path.substr(0, prefix.length()) != prefix) {
+            continue;
+        }
+        
+        std::string relativePath = entry.path.substr(prefix.length());
+        if (relativePath.empty()) {
+            continue;
+        }
+        
+        fs::path fullPath = variantOutputDir / relativePath;
+        
+        if (entry.isDirectory) {
+            if (!fs::create_directories(fullPath, ec) && ec) {
+                return Result::fail("Failed to create directory: " + fullPath.string() + " - " + ec.message());
+            }
+        } else {
+            fs::path parentDir = fullPath.parent_path();
+            if (!parentDir.empty() && !fs::exists(parentDir)) {
+                if (!fs::create_directories(parentDir, ec) && ec) {
+                    return Result::fail("Failed to create directory: " + parentDir.string() + " - " + ec.message());
+                }
+            }
+            
+            std::ofstream file(fullPath, std::ios::binary);
+            if (!file) {
+                return Result::fail("Failed to create file: " + fullPath.string());
+            }
+            
+            file.write(reinterpret_cast<const char*>(entry.data.data()), entry.data.size());
+            if (!file) {
+                return Result::fail("Failed to write file: " + fullPath.string());
+            }
+        }
+    }
+    
+    return Result::ok();
+}
+
+Package::Result Package::extractAll(const std::filesystem::path& outputDir) const {
+    auto variants = getVariants();
+    
+    for (const auto& variant : variants) {
+        auto result = extractVariant(variant, outputDir);
+        if (!result.success) {
+            return result;
+        }
+    }
+    
+    return Result::ok();
+}
+
 } // namespace lgx

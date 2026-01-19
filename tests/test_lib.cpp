@@ -323,3 +323,87 @@ TEST_F(LibraryTest, FreeVerifyResult) {
     lgx_verify_result_t result = {true, nullptr, nullptr};
     lgx_free_verify_result(result);
 }
+
+// =============================================================================
+// Extract Tests
+// =============================================================================
+
+TEST_F(LibraryTest, ExtractVariant) {
+    auto output_path = (test_dir_ / "test.lgx").string();
+    auto file_path = (test_dir_ / "test.txt").string();
+    auto extract_dir = (test_dir_ / "extracted").string();
+    
+    std::ofstream(file_path) << "test content";
+    
+    lgx_create(output_path.c_str(), "testpkg");
+    lgx_package_t pkg = lgx_load(output_path.c_str());
+    ASSERT_NE(pkg, nullptr);
+    
+    lgx_result_t result = lgx_add_variant(pkg, "test-variant", file_path.c_str(), "test.txt");
+    ASSERT_TRUE(result.success);
+    
+    lgx_save(pkg, output_path.c_str());
+    
+    result = lgx_extract(pkg, "test-variant", extract_dir.c_str());
+    EXPECT_TRUE(result.success) << (result.error ? result.error : "");
+    
+    auto extracted_file = std::filesystem::path(extract_dir) / "test-variant" / "test.txt";
+    EXPECT_TRUE(std::filesystem::exists(extracted_file)) << "Expected: " << extracted_file.string();
+    
+    lgx_free_package(pkg);
+}
+
+TEST_F(LibraryTest, ExtractAllVariants) {
+    auto output_path = (test_dir_ / "test.lgx").string();
+    auto file_path = (test_dir_ / "test.txt").string();
+    auto extract_dir = (test_dir_ / "extracted").string();
+    
+    std::ofstream(file_path) << "test content";
+    
+    lgx_create(output_path.c_str(), "testpkg");
+    lgx_package_t pkg = lgx_load(output_path.c_str());
+    ASSERT_NE(pkg, nullptr);
+    
+    lgx_add_variant(pkg, "variant1", file_path.c_str(), "test.txt");
+    lgx_add_variant(pkg, "variant2", file_path.c_str(), "test.txt");
+    lgx_save(pkg, output_path.c_str());
+    
+    lgx_result_t result = lgx_extract(pkg, nullptr, extract_dir.c_str());
+    EXPECT_TRUE(result.success) << (result.error ? result.error : "");
+    
+    EXPECT_TRUE(std::filesystem::exists(std::filesystem::path(extract_dir) / "variant1" / "test.txt"));
+    EXPECT_TRUE(std::filesystem::exists(std::filesystem::path(extract_dir) / "variant2" / "test.txt"));
+    
+    lgx_free_package(pkg);
+}
+
+TEST_F(LibraryTest, ExtractNonexistentVariant) {
+    auto output_path = (test_dir_ / "test.lgx").string();
+    auto extract_dir = (test_dir_ / "extracted").string();
+    
+    lgx_create(output_path.c_str(), "testpkg");
+    lgx_package_t pkg = lgx_load(output_path.c_str());
+    ASSERT_NE(pkg, nullptr);
+    
+    lgx_result_t result = lgx_extract(pkg, "nonexistent", extract_dir.c_str());
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.error, nullptr);
+    
+    lgx_free_package(pkg);
+}
+
+TEST_F(LibraryTest, ExtractNullArgs) {
+    auto output_path = (test_dir_ / "test.lgx").string();
+    
+    lgx_create(output_path.c_str(), "testpkg");
+    lgx_package_t pkg = lgx_load(output_path.c_str());
+    ASSERT_NE(pkg, nullptr);
+    
+    lgx_result_t result = lgx_extract(nullptr, "variant", "/tmp");
+    EXPECT_FALSE(result.success);
+    
+    result = lgx_extract(pkg, "variant", nullptr);
+    EXPECT_FALSE(result.success);
+    
+    lgx_free_package(pkg);
+}

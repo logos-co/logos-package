@@ -126,6 +126,23 @@ public:
     bool wouldMainChange(const std::string& variant, const std::string& newMain) const;
     
     /**
+     * Extract a specific variant to an output directory.
+     * 
+     * @param variant Variant name (case-insensitive)
+     * @param outputDir Directory to extract to (variant contents go to outputDir/variant/)
+     * @return Result indicating success or failure
+     */
+    Result extractVariant(const std::string& variant, const std::filesystem::path& outputDir) const;
+    
+    /**
+     * Extract all variants to an output directory.
+     * 
+     * @param outputDir Directory to extract to (each variant goes to outputDir/variant/)
+     * @return Result indicating success or failure
+     */
+    Result extractAll(const std::filesystem::path& outputDir) const;
+    
+    /**
      * Get entry info for verification.
      */
     const std::vector<TarEntry>& getEntries() const { return entries_; }

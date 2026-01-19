@@ -2,6 +2,7 @@
 #include "commands/create_command.h"
 #include "commands/add_command.h"
 #include "commands/remove_command.h"
+#include "commands/extract_command.h"
 #include "commands/verify_command.h"
 #include "commands/sign_command.h"
 #include "commands/publish_command.h"
@@ -59,6 +60,7 @@ int main(int argc, char* argv[]) {
     commands["create"] = std::make_unique<lgx::CreateCommand>();
     commands["add"] = std::make_unique<lgx::AddCommand>();
     commands["remove"] = std::make_unique<lgx::RemoveCommand>();
+    commands["extract"] = std::make_unique<lgx::ExtractCommand>();
     commands["verify"] = std::make_unique<lgx::VerifyCommand>();
     commands["sign"] = std::make_unique<lgx::SignCommand>();
     commands["publish"] = std::make_unique<lgx::PublishCommand>();

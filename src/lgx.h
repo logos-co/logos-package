@@ -120,6 +120,16 @@ LGX_EXPORT lgx_result_t lgx_add_variant(
 LGX_EXPORT lgx_result_t lgx_remove_variant(lgx_package_t pkg, const char* variant);
 
 /**
+ * Extract variant contents from a package to a directory.
+ * 
+ * @param pkg Package handle
+ * @param variant Variant name (NULL to extract all variants)
+ * @param output_dir Output directory path (variant contents go to output_dir/variant/)
+ * @return Result indicating success or failure
+ */
+LGX_EXPORT lgx_result_t lgx_extract(lgx_package_t pkg, const char* variant, const char* output_dir);
+
+/**
  * Check if a variant exists in the package.
  * 
  * @param pkg Package handle
