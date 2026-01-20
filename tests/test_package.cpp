@@ -169,7 +169,7 @@ TEST_F(PackageTest, AddVariant_Directory) {
     auto pkg = Package::load(pkgPath);
     ASSERT_TRUE(pkg.has_value());
     
-    auto result = pkg->addVariant("web", testDir, "dist/index.js");
+    auto result = pkg->addVariant("web", testDir, "index.js");
     EXPECT_TRUE(result.success);
     
     pkg->save(pkgPath);
@@ -557,7 +557,7 @@ TEST_F(PackageTest, ExtractVariant_Directory) {
     
     auto pkg = Package::load(pkgPath);
     ASSERT_TRUE(pkg.has_value());
-    pkg->addVariant("web", testDir, "dist/index.js");
+    pkg->addVariant("web", testDir, "index.js");
     pkg->save(pkgPath);
     
     pkg = Package::load(pkgPath);
@@ -568,8 +568,8 @@ TEST_F(PackageTest, ExtractVariant_Directory) {
     
     EXPECT_TRUE(result.success) << result.error;
     
-    EXPECT_TRUE(fs::exists(extractDir / "web" / "dist" / "index.js"));
-    EXPECT_TRUE(fs::exists(extractDir / "web" / "dist" / "lib.js"));
+    EXPECT_TRUE(fs::exists(extractDir / "web" / "index.js"));
+    EXPECT_TRUE(fs::exists(extractDir / "web" / "lib.js"));
 }
 
 TEST_F(PackageTest, ExtractVariant_NonExistent) {

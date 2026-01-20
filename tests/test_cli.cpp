@@ -154,7 +154,7 @@ TEST_F(CLITest, AddCommand_Directory) {
     std::string output;
     int exitCode = runLgx(
         "add " + pkgPath.string() + " -v web -f " + 
-        testDir.string() + " --main dist/index.js -y",
+        testDir.string() + " --main index.js -y",
         &output
     );
     
