@@ -314,7 +314,7 @@ lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [-y/--yes]
 **Behavior:**
 - If variant exists, it is **completely replaced**
 - Single file: placed at `variants/<variant>/<filename>`
-- Directory: placed at `variants/<variant>/<dirname>/...`
+- Directory: contents placed at `variants/<variant>/...`
 
 **Examples:**
 ```bash
@@ -322,10 +322,10 @@ lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [-y/--yes]
 lgx add mymodule.lgx --variant linux-amd64 --files ./libfoo.so
 
 # Add directory with explicit main
-lgx add mymodule.lgx -v web -f ./dist --main dist/index.js
+lgx add mymodule.lgx -v web -f ./dist --main index.js
 
 # Replace without confirmation
-lgx add mymodule.lgx -v darwin-arm64 -f ./build -m build/lib.dylib -y
+lgx add mymodule.lgx -v darwin-arm64 -f ./build -m lib.dylib -y
 ```
 
 ### lgx remove
@@ -432,7 +432,7 @@ lgx publish <pkg.lgx>
 
 2. ADD VARIANTS
    lgx add mymodule.lgx -v linux-amd64 -f ./build/lib.so
-   lgx add mymodule.lgx -v web -f ./dist --main dist/index.js
+   lgx add mymodule.lgx -v web -f ./dist --main index.js
    ┌──────────────────────────────┐
    │ mymodule.lgx                 │
    │ ├─manifest.json              │
@@ -440,9 +440,8 @@ lgx publish <pkg.lgx>
    │   ├─linux-amd64/             │
    │   │ └─lib.so                 │
    │   └─web/                     │
-   │     └─dist/                  │
-   │       ├─index.js             │
-   │       └─...                  │
+   │     ├─index.js               │
+   │     └─...                    │
    └──────────────────────────────┘
 
 3. VERIFY

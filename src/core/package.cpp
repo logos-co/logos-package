@@ -322,9 +322,8 @@ Package::Result Package::addVariant(
     std::string archiveBase = "variants/" + variantLc;
     
     if (isDir) {
-        // Add directory with its name
-        std::string dirName = filesPath.filename().string();
-        archiveBase = archiveBase + "/" + dirName;
+        // Directory contents go directly under variant root
+        // archiveBase stays as "variants/<variant>"
     } else {
         // Single file: include filename in path
         std::string fileName = filesPath.filename().string();

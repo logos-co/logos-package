@@ -22,7 +22,7 @@ lgx add mymodule.lgx --variant linux-amd64 --files ./build/libfoo.so
 Add a directory to a variant (requires `--main`):
 
 ```bash
-lgx add mymodule.lgx --variant web --files ./dist --main dist/index.js
+lgx add mymodule.lgx --variant web --files ./dist --main index.js
 ```
 
 **Note:** If a variant already exists, it is **completely replaced** (no merging). Use `-y` to skip confirmation:
@@ -76,8 +76,7 @@ mymodule.lgx (tar.gz)
 │   ├── darwin-arm64/
 │   │   └── libfoo.dylib
 │   └── web/
-│       └── dist/
-│           └── index.js
+│       └── index.js
 ├── docs/                  # Optional
 └── licenses/              # Optional
 ```

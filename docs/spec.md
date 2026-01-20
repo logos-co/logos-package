@@ -181,7 +181,7 @@ lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [-y]
 7. **Replace** entire variant directory (no merging - a variant is treated as an atomic build output; merge risks stale leftovers and hard-to-debug installs)
 8. Copy files/directory to `variants/<variant>/`
    - Single file: `variants/<variant>/<filename>`
-   - Directory: `variants/<variant>/<dirname>/...`
+   - Directory: `variants/<variant>/...` (contents placed directly)
 9. Update `main[variant]` entry with effective main path
 10. Validate and save package
 
