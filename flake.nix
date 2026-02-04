@@ -2,10 +2,12 @@
   description = "lgx - Logos Package Manager CLI";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Follow the same nixpkgs as logos-liblogos to ensure compatibility
+    nixpkgs.follows = "logos-liblogos/nixpkgs";
+    logos-liblogos.url = "github:logos-co/logos-liblogos";
   };
 
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, logos-liblogos }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
