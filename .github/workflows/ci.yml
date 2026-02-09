@@ -8,7 +8,10 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     
     steps:
     - name: Checkout code
@@ -30,3 +33,15 @@ jobs:
     
     - name: Run library tests
       run: ./result/bin/lgx_lib_tests
+    
+    - name: Check nix refs in binary
+      run: ./scripts/check-nix-refs.sh ./result/bin/lgx
+    
+    - name: Check nix refs in libraries
+      run: ./scripts/check-nix-refs.sh ./result/lib/*
+    
+    - name: Check bundle refs in binary
+      run: ./scripts/check-bundle-refs.sh ./result/bin/lgx
+    
+    - name: Check bundle refs in libraries
+      run: ./scripts/check-bundle-refs.sh ./result/lib/*
