@@ -6,7 +6,11 @@ pkgs.stdenv.mkDerivation {
   version = common.version;
   
   inherit src;
-  inherit (common) nativeBuildInputs buildInputs;
+  
+  nativeBuildInputs = common.nativeBuildInputs
+    ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.patchelf ];
+  
+  inherit (common) buildInputs;
   
   configurePhase = ''
     runHook preConfigure
@@ -67,6 +71,132 @@ pkgs.stdenv.mkDerivation {
     fi
     
     runHook postInstall
+  '';
+  
+  # ---------------------------------------------------------------------------
+  # Portability fixup: rewrite /nix/store/ references so the library works on
+  # machines without Nix installed.
+  # ---------------------------------------------------------------------------
+  postFixup = ''
+    if [[ "$(uname)" == "Darwin" ]]; then
+      echo "=== Making library portable (macOS) ==="
+
+      strip_nix_rpaths() {
+        local binary="$1"
+        local bname
+        bname=$(basename "$binary")
+
+        otool -l "$binary" 2>/dev/null | awk '/LC_RPATH/{found=1} found && /path /{print $2; found=0}' | while IFS= read -r rpath; do
+          case "$rpath" in
+            /nix/store/*)
+              echo "  $bname: removing rpath $rpath"
+              install_name_tool -delete_rpath "$rpath" "$binary" 2>/dev/null || true
+              ;;
+          esac
+        done
+      }
+
+      fixup_macos_binary() {
+        local binary="$1"
+        local bname
+        bname=$(basename "$binary")
+
+        otool -L "$binary" | tail -n +2 | awk '{print $1}' | while IFS= read -r dep_path; do
+          case "$dep_path" in
+            /nix/store/*)
+              local dep_name
+              dep_name=$(basename "$dep_path")
+
+              case "$dep_name" in
+                libz.*)
+                  echo "  $bname: $dep_name -> /usr/lib/libz.1.dylib"
+                  install_name_tool -change "$dep_path" /usr/lib/libz.1.dylib "$binary"
+                  ;;
+                libc++.*)
+                  echo "  $bname: $dep_name -> /usr/lib/libc++.1.dylib"
+                  install_name_tool -change "$dep_path" /usr/lib/libc++.1.dylib "$binary"
+                  ;;
+                libc++abi.*)
+                  echo "  $bname: $dep_name -> /usr/lib/libc++abi.dylib"
+                  install_name_tool -change "$dep_path" /usr/lib/libc++abi.dylib "$binary"
+                  ;;
+                *)
+                  if [ ! -f "$out/lib/$dep_name" ]; then
+                    echo "  $bname: bundling $dep_name"
+                    cp "$dep_path" "$out/lib/$dep_name"
+                    chmod u+w "$out/lib/$dep_name"
+                    install_name_tool -id "@loader_path/$dep_name" "$out/lib/$dep_name"
+                  fi
+                  echo "  $bname: $dep_name -> @loader_path/$dep_name"
+                  install_name_tool -change "$dep_path" "@loader_path/$dep_name" "$binary"
+                  ;;
+              esac
+              ;;
+          esac
+        done
+
+        strip_nix_rpaths "$binary"
+      }
+
+      # Fix the shared library if present
+      if [ -f "$out/lib/liblgx.dylib" ]; then
+        install_name_tool -id @rpath/liblgx.dylib "$out/lib/liblgx.dylib"
+        fixup_macos_binary "$out/lib/liblgx.dylib"
+
+        # Fix bundled dependencies (multiple passes for transitive deps)
+        for pass in 1 2 3; do
+          for bundled in "$out/lib/"*.dylib; do
+            [ "$(basename "$bundled")" = "liblgx.dylib" ] && continue
+            fixup_macos_binary "$bundled"
+          done
+        done
+      fi
+
+      echo "=== macOS portability fixup complete ==="
+
+    else
+      echo "=== Making library portable (Linux) ==="
+
+      local main_lib=""
+      if [ -f "$out/lib/liblgx.so" ]; then
+        main_lib="$out/lib/liblgx.so"
+      fi
+
+      if [ -n "$main_lib" ]; then
+        ldd "$main_lib" 2>/dev/null | grep '/nix/store/' | awk '{print $3}' | while IFS= read -r dep_path; do
+          [ -z "$dep_path" ] && continue
+          local dep_name
+          dep_name=$(basename "$dep_path")
+          if [ ! -f "$out/lib/$dep_name" ]; then
+            echo "  bundling $dep_name"
+            cp "$dep_path" "$out/lib/$dep_name"
+            chmod u+w "$out/lib/$dep_name"
+          fi
+        done
+
+        for pass in 1 2 3; do
+          for bundled in "$out/lib/"*.so*; do
+            ldd "$bundled" 2>/dev/null | grep '/nix/store/' | awk '{print $3}' | while IFS= read -r dep_path; do
+              [ -z "$dep_path" ] && continue
+              local dep_name
+              dep_name=$(basename "$dep_path")
+              if [ ! -f "$out/lib/$dep_name" ]; then
+                echo "  bundling transitive dep $dep_name"
+                cp "$dep_path" "$out/lib/$dep_name"
+                chmod u+w "$out/lib/$dep_name"
+              fi
+            done
+          done
+        done
+
+        for lib in "$out/lib/"*.so*; do
+          echo "  setting RPATH on $(basename "$lib")"
+          patchelf --set-rpath '$ORIGIN' "$lib" 2>/dev/null || true
+        done
+      fi
+
+      echo "=== Linux portability fixup complete ==="
+    fi
   '';
   
   # Run tests during build to ensure they pass
