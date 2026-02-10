@@ -1,6 +1,17 @@
 # Builds lgx binary, shared library, and tests all together
 { pkgs, common, src }:
 
+let
+  # Fetch gtest source so we compile it ourselves (with our prefix-map flags)
+  # instead of using the pre-compiled Nix package which embeds /nix/store/ paths.
+  gtest-src = pkgs.fetchFromGitHub {
+    owner = "google";
+    repo = "googletest";
+    rev = "v1.14.0";
+    hash = "sha256-t0RchAHTJbuI5YW4uyBPykTvcjy90JW9AOPNjIhwh6U=";
+  };
+in
+
 pkgs.stdenv.mkDerivation {
   pname = "${common.pname}-all";
   version = common.version;
@@ -10,7 +21,8 @@ pkgs.stdenv.mkDerivation {
   nativeBuildInputs = common.nativeBuildInputs
     ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.patchelf ];
   
-  inherit (common) buildInputs;
+  # Exclude pkgs.gtest from buildInputs -- we build gtest from source instead
+  buildInputs = builtins.filter (p: p != pkgs.gtest) common.buildInputs;
   
   configurePhase = ''
     runHook preConfigure
@@ -19,6 +31,8 @@ pkgs.stdenv.mkDerivation {
       -GNinja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+      -DCMAKE_CXX_FLAGS="-ffile-prefix-map=$(pwd)=. -fmacro-prefix-map=$(pwd)=. -ffile-prefix-map=/nix/store/=nix-deps/ -fmacro-prefix-map=/nix/store/=nix-deps/" \
+      -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=${gtest-src} \
       -DLGX_BUILD_TESTS=ON \
       -DLGX_BUILD_SHARED=ON
     
@@ -61,15 +75,6 @@ pkgs.stdenv.mkDerivation {
     cp build/tests/lgx_tests $out/bin/
     cp build/tests/lgx_lib_tests $out/bin/
     
-    # Fix rpath for lgx_lib_tests to find the shared library
-    if [ -f $out/bin/lgx_lib_tests ]; then
-      if [[ "$OSTYPE" == "darwin"* ]]; then
-        install_name_tool -add_rpath $out/lib $out/bin/lgx_lib_tests
-      else
-        patchelf --set-rpath $out/lib:$(patchelf --print-rpath $out/bin/lgx_lib_tests) $out/bin/lgx_lib_tests
-      fi
-    fi
-    
     runHook postInstall
   '';
   
@@ -88,7 +93,7 @@ pkgs.stdenv.mkDerivation {
 
         otool -l "$binary" 2>/dev/null | awk '/LC_RPATH/{found=1} found && /path /{print $2; found=0}' | while IFS= read -r rpath; do
           case "$rpath" in
-            /nix/store/*)
+            /nix/*)
               echo "  $bname: removing rpath $rpath"
               install_name_tool -delete_rpath "$rpath" "$binary" 2>/dev/null || true
               ;;

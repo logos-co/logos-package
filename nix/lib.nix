@@ -77,7 +77,7 @@ pkgs.stdenv.mkDerivation {
 
         otool -l "$binary" 2>/dev/null | awk '/LC_RPATH/{found=1} found && /path /{print $2; found=0}' | while IFS= read -r rpath; do
           case "$rpath" in
-            /nix/store/*)
+            /nix/*)
               echo "  $bname: removing rpath $rpath"
               install_name_tool -delete_rpath "$rpath" "$binary" 2>/dev/null || true
               ;;

@@ -18,7 +18,7 @@ jobs:
       uses: actions/checkout@v4
     
     - name: Install Nix
-      uses: cachix/install-nix-action@v27
+      uses: cachix/install-nix-action@v31
       with:
         extra_nix_config: |
           experimental-features = nix-command flakes
@@ -34,14 +34,14 @@ jobs:
     - name: Run library tests
       run: ./result/bin/lgx_lib_tests
     
-    - name: Check nix refs in binary
-      run: ./scripts/check-nix-refs.sh ./result/bin/lgx
+    - name: Check nix refs in binaries
+      run: ./scripts/check-nix-refs.sh ./result/bin/*
     
     - name: Check nix refs in libraries
       run: ./scripts/check-nix-refs.sh ./result/lib/*
     
-    - name: Check bundle refs in binary
-      run: ./scripts/check-bundle-refs.sh ./result/bin/lgx
+    - name: Check bundle refs in binaries
+      run: ./scripts/check-bundle-refs.sh ./result/bin/*
     
     - name: Check bundle refs in libraries
       run: ./scripts/check-bundle-refs.sh ./result/lib/*
