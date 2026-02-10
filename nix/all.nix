@@ -74,6 +74,13 @@ pkgs.stdenv.mkDerivation {
     mkdir -p $out/bin
     cp build/tests/lgx_tests $out/bin/
     cp build/tests/lgx_lib_tests $out/bin/
+
+    # lgx_lib_tests links against liblgx.so; CMake embeds the build
+    # directory in its RPATH.  Fix it now so the standard Nix fixupPhase
+    # check for /build/ references does not fail (postFixup runs too late).
+    if command -v patchelf &>/dev/null; then
+      patchelf --set-rpath '$ORIGIN:$ORIGIN/lib:$ORIGIN/../lib' $out/bin/lgx_lib_tests
+    fi
     
     runHook postInstall
   '';
@@ -237,20 +244,32 @@ pkgs.stdenv.mkDerivation {
     else
       echo "=== Making portable (Linux) ==="
 
+      # Glibc libraries that must come from the system.  They contain
+      # nix store paths in their data sections (locale/gconv paths) and
+      # the dynamic linker must live at a fixed absolute path.
+      is_system_lib() {
+        case "$1" in
+          ld-linux*|libc.so*|libpthread.so*|libdl.so*|libm.so*|librt.so*) return 0 ;;
+          *) return 1 ;;
+        esac
+      }
+
       # Bundle /nix/store/ deps from all binaries and libraries
       bundle_nix_deps() {
         local target="$1"
-        ldd "$target" 2>/dev/null | grep '/nix/store/' | awk '{print $3}' | while IFS= read -r dep_path; do
+        ldd "$target" 2>/dev/null | grep -o '/nix/store/[^ )]*' | while IFS= read -r dep_path; do
           [ -z "$dep_path" ] && continue
+          [ -f "$dep_path" ] || continue
           local dep_name
           dep_name=$(basename "$dep_path")
+          is_system_lib "$dep_name" && continue
           if [ ! -f "$out/lib/$dep_name" ]; then
             echo "  bundling $dep_name"
             mkdir -p "$out/lib"
             cp "$dep_path" "$out/lib/$dep_name"
             chmod u+w "$out/lib/$dep_name"
           fi
-        done
+        done || true
       }
 
       # Bundle deps from the shared library
@@ -288,6 +307,29 @@ pkgs.stdenv.mkDerivation {
           if file "$exe" 2>/dev/null | grep -q 'ELF'; then
             echo "  setting RPATH on $(basename "$exe")"
             patchelf --set-rpath '$ORIGIN:$ORIGIN/lib:$ORIGIN/../lib' "$exe" 2>/dev/null || true
+          fi
+        done
+      fi
+
+      # Fix ELF interpreter: replace /nix/store/ interpreter with
+      # the standard system path so binaries work without Nix.
+      if [ -d "$out/bin" ]; then
+        for exe in "$out/bin/"*; do
+          [ -f "$exe" ] || continue
+          if file "$exe" 2>/dev/null | grep -q 'ELF'; then
+            local current_interp
+            current_interp=$(patchelf --print-interpreter "$exe" 2>/dev/null) || continue
+            case "$current_interp" in
+              /nix/store/*)
+                local interp_name
+                interp_name=$(basename "$current_interp")
+                local new_interp="/lib/$interp_name"
+                # x86_64 conventionally uses /lib64
+                [[ "$interp_name" == *x86-64* ]] && new_interp="/lib64/$interp_name"
+                echo "  setting interpreter on $(basename "$exe"): $new_interp"
+                patchelf --set-interpreter "$new_interp" "$exe"
+                ;;
+            esac
           fi
         done
       fi

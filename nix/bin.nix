@@ -174,20 +174,30 @@ pkgs.stdenv.mkDerivation {
     else
       echo "=== Making binary portable (Linux) ==="
 
+      # Glibc libraries that must come from the system.
+      is_system_lib() {
+        case "$1" in
+          ld-linux*|libc.so*|libpthread.so*|libdl.so*|libm.so*|librt.so*) return 0 ;;
+          *) return 1 ;;
+        esac
+      }
+
       # Bundle /nix/store/ deps
       bundle_nix_deps() {
         local target="$1"
-        ldd "$target" 2>/dev/null | grep '/nix/store/' | awk '{print $3}' | while IFS= read -r dep_path; do
+        ldd "$target" 2>/dev/null | grep -o '/nix/store/[^ )]*' | while IFS= read -r dep_path; do
           [ -z "$dep_path" ] && continue
+          [ -f "$dep_path" ] || continue
           local dep_name
           dep_name=$(basename "$dep_path")
+          is_system_lib "$dep_name" && continue
           if [ ! -f "$out/lib/$dep_name" ]; then
             echo "  bundling $dep_name"
             mkdir -p "$out/lib"
             cp "$dep_path" "$out/lib/$dep_name"
             chmod u+w "$out/lib/$dep_name"
           fi
-        done
+        done || true
       }
 
       bundle_nix_deps "$out/bin/lgx"
@@ -208,6 +218,20 @@ pkgs.stdenv.mkDerivation {
 
       # Set RPATH on binary: search ./, ./lib/, ../lib/
       patchelf --set-rpath '$ORIGIN:$ORIGIN/lib:$ORIGIN/../lib' "$out/bin/lgx" 2>/dev/null || true
+
+      # Fix ELF interpreter
+      local current_interp
+      current_interp=$(patchelf --print-interpreter "$out/bin/lgx" 2>/dev/null) || true
+      case "$current_interp" in
+        /nix/store/*)
+          local interp_name
+          interp_name=$(basename "$current_interp")
+          local new_interp="/lib/$interp_name"
+          [[ "$interp_name" == *x86-64* ]] && new_interp="/lib64/$interp_name"
+          echo "  setting interpreter: $new_interp"
+          patchelf --set-interpreter "$new_interp" "$out/bin/lgx"
+          ;;
+      esac
 
       echo "=== Linux portability fixup complete ==="
     fi

@@ -160,32 +160,44 @@ pkgs.stdenv.mkDerivation {
         main_lib="$out/lib/liblgx.so"
       fi
 
+      # Glibc libraries that must come from the system.
+      is_system_lib() {
+        case "$1" in
+          ld-linux*|libc.so*|libpthread.so*|libdl.so*|libm.so*|librt.so*) return 0 ;;
+          *) return 1 ;;
+        esac
+      }
+
       if [ -n "$main_lib" ]; then
         # Bundle all /nix/store/ dependencies
-        ldd "$main_lib" 2>/dev/null | grep '/nix/store/' | awk '{print $3}' | while IFS= read -r dep_path; do
+        ldd "$main_lib" 2>/dev/null | grep -o '/nix/store/[^ )]*' | while IFS= read -r dep_path; do
           [ -z "$dep_path" ] && continue
+          [ -f "$dep_path" ] || continue
           local dep_name
           dep_name=$(basename "$dep_path")
+          is_system_lib "$dep_name" && continue
           if [ ! -f "$out/lib/$dep_name" ]; then
             echo "  bundling $dep_name"
             cp "$dep_path" "$out/lib/$dep_name"
             chmod u+w "$out/lib/$dep_name"
           fi
-        done
+        done || true
 
         # Also bundle transitive deps from any copied libraries
         for pass in 1 2 3; do
           for bundled in "$out/lib/"*.so*; do
-            ldd "$bundled" 2>/dev/null | grep '/nix/store/' | awk '{print $3}' | while IFS= read -r dep_path; do
+            ldd "$bundled" 2>/dev/null | grep -o '/nix/store/[^ )]*' | while IFS= read -r dep_path; do
               [ -z "$dep_path" ] && continue
+              [ -f "$dep_path" ] || continue
               local dep_name
               dep_name=$(basename "$dep_path")
+              is_system_lib "$dep_name" && continue
               if [ ! -f "$out/lib/$dep_name" ]; then
                 echo "  bundling transitive dep $dep_name"
                 cp "$dep_path" "$out/lib/$dep_name"
                 chmod u+w "$out/lib/$dep_name"
               fi
-            done
+            done || true
           done
         done
 
