@@ -8,14 +8,17 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
     
     - name: Install Nix
-      uses: cachix/install-nix-action@v27
+      uses: cachix/install-nix-action@v31
       with:
         extra_nix_config: |
           experimental-features = nix-command flakes
@@ -23,10 +26,27 @@ jobs:
     - name: Build with Nix
       run: nix build
     
+    - name: Copy outputs outside nix store for portability checks
+      run: |
+        mkdir -p ${{ runner.temp }}/result
+        cp -rL ./result/* ${{ runner.temp }}/result/
+    
     - name: Run core tests
       run: |
-        export LGX_BINARY="$(pwd)/result/bin/lgx"
-        ./result/bin/lgx_tests
+        export LGX_BINARY="${{ runner.temp }}/result/bin/lgx"
+        "${{ runner.temp }}/result/bin/lgx_tests"
     
     - name: Run library tests
-      run: ./result/bin/lgx_lib_tests
+      run: "${{ runner.temp }}/result/bin/lgx_lib_tests"
+    
+    - name: Check nix refs in binaries
+      run: ./scripts/check-nix-refs.sh ${{ runner.temp }}/result/bin/*
+
+    - name: Check nix refs in libraries
+      run: ./scripts/check-nix-refs.sh ${{ runner.temp }}/result/lib/*
+
+    - name: Check bundle refs in binaries
+      run: ./scripts/check-bundle-refs.sh ${{ runner.temp }}/result/bin/*
+
+    - name: Check bundle refs in libraries
+      run: ./scripts/check-bundle-refs.sh ${{ runner.temp }}/result/lib/*
