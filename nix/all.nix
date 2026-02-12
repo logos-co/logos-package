@@ -7,6 +7,7 @@ pkgs.stdenv.mkDerivation {
   
   inherit src;
   inherit (common) nativeBuildInputs buildInputs;
+  dontDisableStatic = common.dontDisableStatic;
   
   configurePhase = ''
     runHook preConfigure

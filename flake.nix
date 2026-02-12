@@ -54,10 +54,16 @@
           ];
           buildInputs = [
             pkgs.zlib
-            pkgs.icu
             pkgs.nlohmann_json
+            # Some libraries require static linking
+            # for portability
+            pkgs.pkgsStatic.libiconv
+            pkgs.pkgsStatic.icu
           ];
-          
+
+          # Static libs from pkgsStatic.*; dontDisableStatic keeps .a in closure
+          dontDisableStatic = true;
+
           shellHook = ''
             echo "lgx development environment"
             echo "Build with: nix build"
