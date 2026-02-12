@@ -26,7 +26,7 @@ if(APPLE)
     endif()
 endif()
 
-find_package(ICU REQUIRED COMPONENTS uc i18n)
+find_package(ICU REQUIRED COMPONENTS data uc i18n)
 
 # Try to find nlohmann_json first (for Nix and system installations)
 # Fall back to FetchContent if not found
@@ -61,6 +61,7 @@ target_link_libraries(lgx_core PUBLIC
     ZLIB::ZLIB
     ICU::uc
     ICU::i18n
+    ICU::data
     nlohmann_json::nlohmann_json
 )
 
@@ -86,6 +87,7 @@ if(LGX_BUILD_SHARED)
         ZLIB::ZLIB
         ICU::uc
         ICU::i18n
+        ICU::data
         nlohmann_json::nlohmann_json
     )
     

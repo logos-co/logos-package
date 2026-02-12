@@ -1,4 +1,5 @@
 # Common build configuration shared across all packages
+# libiconv, ICU, and GTest are linked statically for portability.
 { pkgs }:
 
 {
@@ -12,18 +13,25 @@
     pkgs.pkg-config
   ];
   
-  # Common runtime dependencies
+  # Common runtime dependencies (static iconv/ICU, static gtest where possible)
   buildInputs = [ 
     pkgs.zlib
-    pkgs.icu
+    pkgs.pkgsStatic.libiconv
+    pkgs.pkgsStatic.icu
     pkgs.nlohmann_json
-    pkgs.gtest
+    # GTest built static so test binaries don't depend on libgtest at runtime
+    (pkgs.gtest.overrideAttrs (old: {
+      cmakeFlags = (old.cmakeFlags or [ ]) ++ [ "-DBUILD_SHARED_LIBS=OFF" ];
+    }))
   ];
   
   # Common CMake flags
   cmakeFlags = [ 
     "-GNinja"
   ];
+  
+  # Ensure static libs from buildInputs are not stripped from the closure
+  dontDisableStatic = true;
   
   # Metadata
   meta = with pkgs.lib; {
