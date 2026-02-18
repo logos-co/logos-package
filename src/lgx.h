@@ -184,11 +184,19 @@ LGX_EXPORT const char* lgx_get_description(lgx_package_t pkg);
 
 /**
  * Set the package description in manifest.
- * 
+ *
  * @param pkg Package handle
  * @param description New description string
  */
 LGX_EXPORT void lgx_set_description(lgx_package_t pkg, const char* description);
+
+/**
+ * Get the full manifest as a JSON string.
+ *
+ * @param pkg Package handle
+ * @return JSON string of the manifest, owned by library (valid until package is freed)
+ */
+LGX_EXPORT const char* lgx_get_manifest_json(lgx_package_t pkg);
 
 /* Memory management */
 
