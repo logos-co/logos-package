@@ -9,24 +9,16 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-    
+
     - name: Install Nix
       uses: cachix/install-nix-action@v27
       with:
         extra_nix_config: |
           experimental-features = nix-command flakes
-    
-    - name: Build with Nix
+
+    - name: Build and test
       run: nix build
-    
-    - name: Run core tests
-      run: |
-        export LGX_BINARY="$(pwd)/result/bin/lgx"
-        ./result/bin/lgx_tests
-    
-    - name: Run library tests
-      run: ./result/bin/lgx_lib_tests

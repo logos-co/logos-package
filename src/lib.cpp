@@ -68,6 +68,7 @@ struct lgx_package_opaque {
     std::string name_cache;
     std::string version_cache;
     std::string description_cache;
+    std::string icon_cache;
     std::string manifest_json_cache;
 };
 
@@ -278,6 +279,27 @@ LGX_EXPORT void lgx_set_description(lgx_package_t pkg, const char* description) 
     
     clear_error();
     pkg->pkg->getManifest().description = description;
+}
+
+LGX_EXPORT const char* lgx_get_icon(lgx_package_t pkg) {
+    if (!pkg) {
+        set_error("Invalid argument: pkg cannot be NULL");
+        return nullptr;
+    }
+
+    clear_error();
+    pkg->icon_cache = pkg->pkg->getManifest().icon;
+    return pkg->icon_cache.c_str();
+}
+
+LGX_EXPORT void lgx_set_icon(lgx_package_t pkg, const char* icon) {
+    if (!pkg || !icon) {
+        set_error("Invalid arguments: pkg and icon cannot be NULL");
+        return;
+    }
+
+    clear_error();
+    pkg->pkg->getManifest().icon = icon;
 }
 
 LGX_EXPORT const char* lgx_get_manifest_json(lgx_package_t pkg) {

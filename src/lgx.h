@@ -191,6 +191,22 @@ LGX_EXPORT const char* lgx_get_description(lgx_package_t pkg);
 LGX_EXPORT void lgx_set_description(lgx_package_t pkg, const char* description);
 
 /**
+ * Get the package icon path from manifest.
+ *
+ * @param pkg Package handle
+ * @return Package icon path, owned by library (valid until package is freed)
+ */
+LGX_EXPORT const char* lgx_get_icon(lgx_package_t pkg);
+
+/**
+ * Set the package icon path in manifest.
+ *
+ * @param pkg Package handle
+ * @param icon New icon path string
+ */
+LGX_EXPORT void lgx_set_icon(lgx_package_t pkg, const char* icon);
+
+/**
  * Get the full manifest as a JSON string.
  *
  * @param pkg Package handle

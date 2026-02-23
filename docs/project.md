@@ -234,6 +234,8 @@ The header file `src/lgx.h` is installed to `include/` when using `make install`
 - `lgx_set_version(pkg, version) → lgx_result_t` - Set package version
 - `lgx_get_description(pkg) → const char*` - Get package description (owned by library)
 - `lgx_set_description(pkg, description)` - Set package description
+- `lgx_get_icon(pkg) → const char*` - Get package icon path (owned by library)
+- `lgx_set_icon(pkg, icon)` - Set package icon path
 - `lgx_get_manifest_json(pkg) → const char*` - Get the full manifest as a JSON string (owned by library)
 
 **Memory Management:**
@@ -594,35 +596,11 @@ This builds:
 
 **Running Tests with CMake:**
 
-Tests are built using Google Test and can be run via CMake's CTest or directly:
+Tests are built using Google Test and can be run via CMake's CTest:
 
 ```bash
 cd build
 ctest --output-on-failure
-```
-
-Or run test executables directly:
-
-```bash
-# Core tests (including CLI integration tests)
-./build/tests/lgx_tests
-
-# Library API tests (requires shared library build)
-./build/tests/lgx_lib_tests
-```
-
-**CLI Integration Tests:**
-
-The CLI tests (`test_cli.cpp`) require the `lgx` binary to be available. They will:
-1. Check for `LGX_BINARY` environment variable first
-2. Search common locations (build directory, parent directories)
-3. Skip if binary is not found
-
-To run CLI tests explicitly:
-
-```bash
-export LGX_BINARY="$(pwd)/build/lgx"
-./build/tests/lgx_tests
 ```
 
 **Installation:**

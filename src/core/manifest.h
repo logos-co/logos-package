@@ -45,6 +45,7 @@ public:
     std::string author;
     std::string type;
     std::string category;
+    std::string icon;
     std::vector<std::string> dependencies;
     
     // Main mapping: variant -> relative path to entry point

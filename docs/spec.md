@@ -63,6 +63,7 @@ The manifest is a UTF-8 encoded JSON file with the following required fields:
   "author": "Author Name",
   "type": "library",
   "category": "crypto",
+  "icon": "icon.png",
   "dependencies": ["dep1", "dep2"],
   "main": {
     "linux-amd64": "path/to/main.so",
@@ -82,6 +83,7 @@ The manifest is a UTF-8 encoded JSON file with the following required fields:
 | `author` | string | Author/maintainer name | Human metadata |
 | `type` | string | Package type classification | Classification |
 | `category` | string | Package category | Classification |
+| `icon` | string | Relative path to icon file bundled in the package | Display/branding |
 | `dependencies` | array | List of dependency strings | Runtime needs |
 | `main` | object | Map of variant name → relative path to entry point (e.g ) `"linux-amd64": "path/to/main.so"` means `linux-amd64/path/to/main.so` | Entry point resolution |
 
@@ -156,6 +158,7 @@ lgx create <name>
    - `author`: `""`
    - `type`: `""`
    - `category`: `""`
+   - `icon`: `""`
    - `dependencies`: `[]`
    - `main`: `{}`
 4. Create empty `variants/` directory

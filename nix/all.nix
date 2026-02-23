@@ -52,20 +52,6 @@ pkgs.stdenv.mkDerivation {
     mkdir -p $out/include
     cp ${src}/src/lgx.h $out/include/
     
-    # Install test executables
-    mkdir -p $out/bin
-    cp build/tests/lgx_tests $out/bin/
-    cp build/tests/lgx_lib_tests $out/bin/
-    
-    # Fix rpath for lgx_lib_tests to find the shared library
-    if [ -f $out/bin/lgx_lib_tests ]; then
-      if [[ "$OSTYPE" == "darwin"* ]]; then
-        install_name_tool -add_rpath $out/lib $out/bin/lgx_lib_tests
-      else
-        patchelf --set-rpath $out/lib:$(patchelf --print-rpath $out/bin/lgx_lib_tests) $out/bin/lgx_lib_tests
-      fi
-    fi
-    
     runHook postInstall
   '';
   
