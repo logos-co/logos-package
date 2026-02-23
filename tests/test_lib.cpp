@@ -100,7 +100,12 @@ TEST_F(LibraryTest, GetPackageMetadata) {
     // Get description (should be empty initially)
     const char* desc = lgx_get_description(pkg);
     ASSERT_NE(desc, nullptr);
-    
+
+    // Get icon (should be empty initially)
+    const char* icon = lgx_get_icon(pkg);
+    ASSERT_NE(icon, nullptr);
+    EXPECT_STREQ(icon, "");
+
     lgx_free_package(pkg);
 }
 
@@ -123,7 +128,12 @@ TEST_F(LibraryTest, SetPackageMetadata) {
     lgx_set_description(pkg, "Test package");
     const char* desc = lgx_get_description(pkg);
     EXPECT_STREQ(desc, "Test package");
-    
+
+    // Set icon
+    lgx_set_icon(pkg, "icon.png");
+    const char* icon = lgx_get_icon(pkg);
+    EXPECT_STREQ(icon, "icon.png");
+
     lgx_free_package(pkg);
 }
 
@@ -303,7 +313,8 @@ TEST_F(LibraryTest, NullPackageHandles) {
     EXPECT_EQ(lgx_get_name(nullptr), nullptr);
     EXPECT_EQ(lgx_get_version(nullptr), nullptr);
     EXPECT_EQ(lgx_get_description(nullptr), nullptr);
-    
+    EXPECT_EQ(lgx_get_icon(nullptr), nullptr);
+
     // These should not crash with NULL
     lgx_free_package(nullptr);
 }

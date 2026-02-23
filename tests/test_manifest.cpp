@@ -12,6 +12,7 @@ static const char* VALID_MANIFEST_JSON = R"({
   "author": "Test Author",
   "type": "library",
   "category": "test",
+  "icon": "icon.png",
   "dependencies": ["dep1", "dep2"],
   "main": {
     "linux-amd64": "lib/test.so",
@@ -34,6 +35,7 @@ TEST(ManifestTest, FromJson_ValidManifest) {
     EXPECT_EQ(manifest->author, "Test Author");
     EXPECT_EQ(manifest->type, "library");
     EXPECT_EQ(manifest->category, "test");
+    EXPECT_EQ(manifest->icon, "icon.png");
     EXPECT_EQ(manifest->dependencies.size(), 2);
     EXPECT_EQ(manifest->main.size(), 2);
 }
@@ -46,6 +48,7 @@ TEST(ManifestTest, FromJson_MissingManifestVersion) {
       "author": "",
       "type": "",
       "category": "",
+      "icon": "",
       "dependencies": [],
       "main": {}
     })";
@@ -62,6 +65,7 @@ TEST(ManifestTest, FromJson_MissingName) {
       "author": "",
       "type": "",
       "category": "",
+      "icon": "",
       "dependencies": [],
       "main": {}
     })";
@@ -79,6 +83,7 @@ TEST(ManifestTest, FromJson_MissingMain) {
       "author": "",
       "type": "",
       "category": "",
+      "icon": "",
       "dependencies": []
     })";
     
@@ -94,6 +99,23 @@ TEST(ManifestTest, FromJson_InvalidJson) {
     EXPECT_FALSE(Manifest::getLastError().empty());
 }
 
+TEST(ManifestTest, FromJson_MissingIcon) {
+    const char* json = R"({
+      "manifestVersion": "0.1.0",
+      "name": "test",
+      "version": "1.0.0",
+      "description": "",
+      "author": "",
+      "type": "",
+      "category": "",
+      "dependencies": [],
+      "main": {}
+    })";
+
+    auto manifest = Manifest::fromJson(json);
+    EXPECT_FALSE(manifest.has_value());
+}
+
 TEST(ManifestTest, FromJson_EmptyDependencies) {
     const char* json = R"({
       "manifestVersion": "0.1.0",
@@ -103,6 +125,7 @@ TEST(ManifestTest, FromJson_EmptyDependencies) {
       "author": "",
       "type": "",
       "category": "",
+      "icon": "",
       "dependencies": [],
       "main": {}
     })";
@@ -127,6 +150,7 @@ TEST(ManifestTest, ToJson_Roundtrip) {
     EXPECT_EQ(parsed->manifestVersion, original->manifestVersion);
     EXPECT_EQ(parsed->name, original->name);
     EXPECT_EQ(parsed->version, original->version);
+    EXPECT_EQ(parsed->icon, original->icon);
     EXPECT_EQ(parsed->main, original->main);
 }
 

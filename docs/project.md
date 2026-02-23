@@ -234,6 +234,8 @@ The header file `src/lgx.h` is installed to `include/` when using `make install`
 - `lgx_set_version(pkg, version) → lgx_result_t` - Set package version
 - `lgx_get_description(pkg) → const char*` - Get package description (owned by library)
 - `lgx_set_description(pkg, description)` - Set package description
+- `lgx_get_icon(pkg) → const char*` - Get package icon path (owned by library)
+- `lgx_set_icon(pkg, icon)` - Set package icon path
 - `lgx_get_manifest_json(pkg) → const char*` - Get the full manifest as a JSON string (owned by library)
 
 **Memory Management:**

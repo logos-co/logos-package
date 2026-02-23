@@ -30,6 +30,7 @@ Package::Result Package::create(
     pkg.manifest_.author = "";
     pkg.manifest_.type = "";
     pkg.manifest_.category = "";
+    pkg.manifest_.icon = "";
     pkg.manifest_.dependencies = {};
     
     // Create skeleton with manifest and variants directory

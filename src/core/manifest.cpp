@@ -19,6 +19,7 @@ Manifest::Manifest()
     , author("")
     , type("")
     , category("")
+    , icon("")
 {
 }
 
@@ -70,7 +71,13 @@ std::optional<Manifest> Manifest::fromJson(const std::string& jsonStr) {
             return std::nullopt;
         }
         m.category = j["category"].get<std::string>();
-        
+
+        if (!j.contains("icon") || !j["icon"].is_string()) {
+            lastError_ = "Missing or invalid 'icon' field";
+            return std::nullopt;
+        }
+        m.icon = j["icon"].get<std::string>();
+
         if (!j.contains("dependencies") || !j["dependencies"].is_array()) {
             lastError_ = "Missing or invalid 'dependencies' field";
             return std::nullopt;
@@ -115,6 +122,7 @@ std::string Manifest::toJson() const {
     j["author"] = author;
     j["type"] = type;
     j["category"] = category;
+    j["icon"] = icon;
     j["dependencies"] = dependencies;
     
     // main as object with sorted keys
