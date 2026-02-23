@@ -133,18 +133,7 @@ The C API header will be at `./result/include/lgx.h`.
 
 #### Running Tests with Nix
 
-After building with `nix build '.'` or `nix build '.#all'`, run the tests:
-
-```bash
-# Run core tests (including CLI integration tests)
-export LGX_BINARY="$(pwd)/result/bin/lgx"
-./result/bin/lgx_tests
-
-# Run library API tests
-./result/bin/lgx_lib_tests
-```
-
-**Note:** The `LGX_BINARY` environment variable tells the CLI tests where to find the `lgx` binary. Without it, the CLI integration tests will be skipped (though all other tests will still run).
+Tests run automatically during `nix build`. The build will fail if any tests do not pass.
 
 **Note:** If you haven't enabled flakes, you'll need to add the experimental features flag:
 
@@ -212,13 +201,6 @@ This will create:
 ```bash
 mkdir build
 cd build
-cmake .. -DLGX_BUILD_TESTS=ON
-make -j$(nproc)
-```
-
-To also test the library:
-
-```bash
 cmake .. -DLGX_BUILD_TESTS=ON -DLGX_BUILD_SHARED=ON
 make -j$(nproc)
 ```
@@ -228,10 +210,4 @@ make -j$(nproc)
 ```bash
 cd build
 ctest --output-on-failure
-```
-
-Or run the test executable directly:
-
-```bash
-./build/lgx_tests
 ```
