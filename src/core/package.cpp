@@ -452,12 +452,24 @@ Package::Result Package::addFilesystemEntries(
         entry.path = normalizedBase;
         entry.data = std::move(data);
         entry.isDirectory = false;
+        
+        auto status = fs::status(fsPath, ec);
+        if (!ec) {
+            entry.mode = static_cast<uint32_t>(status.permissions() & fs::perms::mask);
+        }
+        
         entries_.push_back(std::move(entry));
     } else if (fs::is_directory(fsPath, ec)) {
         // Directory - add entry for the directory itself
         TarEntry dirEntry;
         dirEntry.path = normalizedBase;
         dirEntry.isDirectory = true;
+        
+        auto status = fs::status(fsPath, ec);
+        if (!ec) {
+            dirEntry.mode = static_cast<uint32_t>(status.permissions() & fs::perms::mask);
+        }
+        
         entries_.push_back(dirEntry);
         
         // Recursively add contents
@@ -481,6 +493,12 @@ Package::Result Package::addFilesystemEntries(
                 TarEntry entry;
                 entry.path = *normalizedPathOpt;
                 entry.isDirectory = true;
+                
+                auto status = fs::status(item.path(), ec);
+                if (!ec) {
+                    entry.mode = static_cast<uint32_t>(status.permissions() & fs::perms::mask);
+                }
+                
                 entries_.push_back(std::move(entry));
             } else if (fs::is_regular_file(item.path(), ec)) {
                 std::ifstream file(item.path(), std::ios::binary);
@@ -497,6 +515,12 @@ Package::Result Package::addFilesystemEntries(
                 entry.path = *normalizedPathOpt;
                 entry.data = std::move(data);
                 entry.isDirectory = false;
+                
+                auto status = fs::status(item.path(), ec);
+                if (!ec) {
+                    entry.mode = static_cast<uint32_t>(status.permissions() & fs::perms::mask);
+                }
+                
                 entries_.push_back(std::move(entry));
             } else {
                 // Skip symlinks, special files, etc.
