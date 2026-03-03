@@ -129,7 +129,7 @@ Package::Result Package::save(const std::filesystem::path& lgxPath) const {
                 addedDirs.insert(dirPath);
             }
         } else {
-            writer.addFile(entry.path, entry.data);
+            writer.addEntry(entry);
         }
     }
     
@@ -600,6 +600,14 @@ Package::Result Package::extractVariant(
             file.write(reinterpret_cast<const char*>(entry.data.data()), entry.data.size());
             if (!file) {
                 return Result::fail("Failed to write file: " + fullPath.string());
+            }
+            file.close();
+
+            if (entry.mode != 0) {
+                fs::permissions(fullPath, static_cast<fs::perms>(entry.mode & 0777), ec);
+                if (ec) {
+                    return Result::fail("Failed to set permissions on: " + fullPath.string() + " - " + ec.message());
+                }
             }
         }
     }
