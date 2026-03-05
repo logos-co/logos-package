@@ -128,9 +128,15 @@ std::vector<uint8_t> DeterministicTarWriter::createHeader(const TarEntry& entry)
     
     // Name (0-99)
     std::memcpy(header.data(), name.c_str(), std::min(name.length(), NAME_SIZE));
-    
+
     // Mode (100-107)
-    writeOctal(header.data() + 100, 8, entry.isDirectory ? DIR_MODE : FILE_MODE);
+    uint32_t mode = entry.mode & 0777;
+    if (entry.isDirectory) {
+        mode = DIR_MODE;
+    } else if (mode == 0) {
+        mode = FILE_MODE;
+    }
+    writeOctal(header.data() + 100, 8, mode);
     
     // UID (108-115)
     writeOctal(header.data() + 108, 8, UID);

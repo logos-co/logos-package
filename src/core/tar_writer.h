@@ -16,12 +16,15 @@ struct TarEntry {
     std::string path;           // NFC-normalized archive path
     std::vector<uint8_t> data;  // File contents (empty for directories)
     bool isDirectory;
+    uint32_t mode;              // File mode (permissions)
     
-    TarEntry() : isDirectory(false) {}
-    TarEntry(const std::string& p, bool isDir = false) 
-        : path(p), isDirectory(isDir) {}
-    TarEntry(const std::string& p, const std::vector<uint8_t>& d)
-        : path(p), data(d), isDirectory(false) {}
+    TarEntry() : isDirectory(false), mode(0) {}
+    TarEntry(const std::string& p, bool isDir = false, uint32_t m = 0) 
+        : path(p), isDirectory(isDir), mode(m) {}
+    TarEntry(const std::string& p, const std::vector<uint8_t>& d, uint32_t m = 0)
+        : path(p), data(d), isDirectory(false), mode(m) {}
+    TarEntry(const std::string& p, const std::string& d, uint32_t m = 0)
+        : path(p), data(d.begin(), d.end()), isDirectory(false), mode(m) {}
 };
 
 /**
@@ -30,7 +33,7 @@ struct TarEntry {
  * Determinism is achieved by:
  * - Lexicographic sorting of entries by NFC-normalized path bytes
  * - Fixed metadata: uid=0, gid=0, uname="", gname="", mtime=0
- * - Fixed modes: dirs=0755, files=0644
+ * - Modes: dirs=0755, files preserve their mode or 0644 if not set
  * - USTAR format for consistency
  */
 class DeterministicTarWriter {

@@ -150,6 +150,30 @@ TEST(TarWriterTest, FixedMetadata) {
     }
 }
 
+TEST(TarWriterTest, CustomMode) {
+    DeterministicTarWriter writer;
+    
+    // Add file with custom mode
+    TarEntry entry1("script.sh", std::string("echo hello"), 0700);
+    writer.addEntry(entry1);
+    
+    // Add directory with custom mode
+    TarEntry entry2("tools", true, 0777);
+    writer.addEntry(entry2);
+    
+    auto tarData = writer.finalize();
+    auto result = TarReader::read(tarData);
+    ASSERT_TRUE(result.success);
+    ASSERT_EQ(result.entries.size(), 2);
+    
+    // Entries are sorted lexicographically: script.sh, tools
+    EXPECT_EQ(result.entries[0].path, "script.sh");
+    EXPECT_EQ(result.entries[0].mode, 0700);
+    
+    EXPECT_EQ(result.entries[1].path, "tools/");
+    EXPECT_EQ(result.entries[1].mode, 0755); // Directories now always DIR_MODE (0755)
+}
+
 // =============================================================================
 // Roundtrip Tests
 // =============================================================================

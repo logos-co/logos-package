@@ -158,9 +158,7 @@ TarReader::ReadResult TarReader::read(const std::vector<uint8_t>& tarData) {
         zeroBlockCount = 0;
         const auto& info = *infoOpt;
         
-        TarEntry entry;
-        entry.path = info.path;
-        entry.isDirectory = info.isDirectory;
+        TarEntry entry(info.path, info.isDirectory, info.mode);
         
         // Move past header
         offset += BLOCK_SIZE;
@@ -324,10 +322,8 @@ bool TarReader::iterate(
         zeroBlockCount = 0;
         const auto& info = *infoOpt;
         
-        TarEntry entry;
-        entry.path = info.path;
-        entry.isDirectory = info.isDirectory;
-        
+        TarEntry entry(info.path, info.isDirectory, info.mode);
+
         // Move past header
         offset += BLOCK_SIZE;
         
