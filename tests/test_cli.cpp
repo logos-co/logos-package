@@ -328,10 +328,13 @@ void createSingleVariantPackage(
     fs::path dir = pkgPath.parent_path();
     fs::path tmpFile = dir / (variant + "_file.so");
 
-    // Create the package
-    std::string baseName = pkgPath.stem().string();
-    std::string cmd = lgxBinary + " create " + (dir / baseName).string() + " 2>&1";
+    // Create the package using the logical name (so manifest.name matches across packages)
+    fs::path createdPath = dir / (name + ".lgx");
+    std::string cmd = lgxBinary + " create " + (dir / name).string() + " 2>&1";
     system(cmd.c_str());
+    if (createdPath != pkgPath) {
+        fs::rename(createdPath, pkgPath);
+    }
 
     // Create a test file and add as variant
     std::ofstream(tmpFile) << fileContent;

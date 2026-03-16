@@ -2,8 +2,11 @@
 #include "core/package.h"
 #include "core/path_normalizer.h"
 
+#include <chrono>
 #include <filesystem>
 #include <set>
+
+#include <unistd.h>
 
 namespace lgx {
 
@@ -77,7 +80,6 @@ int MergeCommand::execute(const std::vector<std::string>& args) {
 
     // Check for duplicate variants across packages
     std::map<std::string, std::string> variantSource; // variant -> source file
-    std::set<std::string> skippedVariants;
     for (size_t i = 0; i < packages.size(); ++i) {
         for (const auto& variant : packages[i].getVariants()) {
             auto it = variantSource.find(variant);
@@ -86,7 +88,6 @@ int MergeCommand::execute(const std::vector<std::string>& args) {
                     printInfo("Warning: skipping duplicate variant '" + variant +
                               "' from '" + positional[i] + "' (already in '" +
                               it->second + "')");
-                    skippedVariants.insert(variant);
                 } else {
                     printError("Duplicate variant '" + variant + "' found in '" +
                                it->second + "' and '" + positional[i] +
@@ -140,8 +141,10 @@ int MergeCommand::execute(const std::vector<std::string>& args) {
     mergedManifest.icon = refManifest.icon;
     mergedManifest.dependencies = refManifest.dependencies;
 
-    // Create a temp directory for extracting variants
-    auto tmpBase = std::filesystem::temp_directory_path() / "lgx-merge";
+    // Create a unique temp directory for extracting variants
+    auto tmpBase = std::filesystem::temp_directory_path() /
+        ("lgx-merge-" + std::to_string(getpid()) + "-" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(tmpBase);
     TempDir tmpGuard(tmpBase);
 
