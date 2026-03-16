@@ -155,7 +155,13 @@ int MergeCommand::execute(const std::vector<std::string>& args) {
 
             // Extract this variant's files to a temp directory
             auto extractDir = tmpBase / ("pkg" + std::to_string(i));
-            std::filesystem::create_directories(extractDir);
+            std::error_code dirEc;
+            std::filesystem::create_directories(extractDir, dirEc);
+            if (dirEc) {
+                printError("Failed to create temporary directory '" +
+                           extractDir.string() + "': " + dirEc.message());
+                return 1;
+            }
 
             auto extractResult = packages[i].extractVariant(variant, extractDir);
             if (!extractResult.success) {
