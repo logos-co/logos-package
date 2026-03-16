@@ -6,6 +6,7 @@
 #include "commands/verify_command.h"
 #include "commands/sign_command.h"
 #include "commands/publish_command.h"
+#include "commands/merge_command.h"
 
 #include <iostream>
 #include <memory>
@@ -64,6 +65,7 @@ int main(int argc, char* argv[]) {
     commands["verify"] = std::make_unique<lgx::VerifyCommand>();
     commands["sign"] = std::make_unique<lgx::SignCommand>();
     commands["publish"] = std::make_unique<lgx::PublishCommand>();
+    commands["merge"] = std::make_unique<lgx::MergeCommand>();
     
     // Parse arguments
     std::vector<std::string> args;

@@ -313,6 +313,162 @@ TEST_F(CLITest, AddCommand_DirectoryWithoutMain) {
     EXPECT_NE(output.find("required"), std::string::npos);
 }
 
+// =============================================================================
+// Merge Command Tests
+// =============================================================================
+
+// Helper to create a single-variant .lgx package with metadata
+void createSingleVariantPackage(
+    const std::string& lgxBinary,
+    const fs::path& pkgPath,
+    const std::string& name,
+    const std::string& variant,
+    const std::string& fileContent
+) {
+    fs::path dir = pkgPath.parent_path();
+    fs::path tmpFile = dir / (variant + "_file.so");
+
+    // Create the package
+    std::string baseName = pkgPath.stem().string();
+    std::string cmd = lgxBinary + " create " + (dir / baseName).string() + " 2>&1";
+    system(cmd.c_str());
+
+    // Create a test file and add as variant
+    std::ofstream(tmpFile) << fileContent;
+    cmd = lgxBinary + " add " + pkgPath.string() +
+          " -v " + variant + " -f " + tmpFile.string() + " -y 2>&1";
+    system(cmd.c_str());
+}
+
+// Test: lgx merge <pkg1.lgx> <pkg2.lgx>
+// Verifies basic merge of two single-variant packages
+TEST_F(CLITest, MergeCommand_BasicMerge) {
+    fs::path pkg1 = tempDir / "pkg1.lgx";
+    fs::path pkg2 = tempDir / "pkg2.lgx";
+    fs::path merged = tempDir / "merged.lgx";
+
+    createSingleVariantPackage(lgxBinary.string(), pkg1, "test", "linux-amd64", "linux lib");
+    createSingleVariantPackage(lgxBinary.string(), pkg2, "test", "darwin-arm64", "darwin lib");
+
+    std::string output;
+    int exitCode = runLgx(
+        "merge " + pkg1.string() + " " + pkg2.string() +
+        " -o " + merged.string() + " -y",
+        &output
+    );
+
+    EXPECT_EQ(exitCode, 0);
+    EXPECT_NE(output.find("Merged"), std::string::npos);
+    EXPECT_TRUE(fs::exists(merged));
+
+    // Verify the merged package is valid
+    exitCode = runLgx("verify " + merged.string(), &output);
+    EXPECT_EQ(exitCode, 0);
+}
+
+// Test: lgx merge with duplicate variants (should fail)
+TEST_F(CLITest, MergeCommand_DuplicateVariantsFails) {
+    fs::path pkg1 = tempDir / "pkg1.lgx";
+    fs::path pkg2 = tempDir / "pkg2.lgx";
+    fs::path merged = tempDir / "merged.lgx";
+
+    createSingleVariantPackage(lgxBinary.string(), pkg1, "test", "linux-amd64", "lib v1");
+    createSingleVariantPackage(lgxBinary.string(), pkg2, "test", "linux-amd64", "lib v2");
+
+    std::string output;
+    int exitCode = runLgx(
+        "merge " + pkg1.string() + " " + pkg2.string() +
+        " -o " + merged.string() + " -y",
+        &output
+    );
+
+    EXPECT_NE(exitCode, 0);
+    EXPECT_NE(output.find("Duplicate variant"), std::string::npos);
+}
+
+// Test: lgx merge with --skip-duplicates
+TEST_F(CLITest, MergeCommand_SkipDuplicates) {
+    fs::path pkg1 = tempDir / "pkg1.lgx";
+    fs::path pkg2 = tempDir / "pkg2.lgx";
+    fs::path merged = tempDir / "merged.lgx";
+
+    createSingleVariantPackage(lgxBinary.string(), pkg1, "test", "linux-amd64", "lib v1");
+    createSingleVariantPackage(lgxBinary.string(), pkg2, "test", "linux-amd64", "lib v2");
+
+    std::string output;
+    int exitCode = runLgx(
+        "merge " + pkg1.string() + " " + pkg2.string() +
+        " -o " + merged.string() + " --skip-duplicates -y",
+        &output
+    );
+
+    EXPECT_EQ(exitCode, 0);
+    EXPECT_NE(output.find("skipping"), std::string::npos);
+    EXPECT_TRUE(fs::exists(merged));
+}
+
+// Test: lgx merge with manifest mismatch (should fail)
+TEST_F(CLITest, MergeCommand_ManifestMismatch) {
+    fs::path pkg1 = tempDir / "pkg1.lgx";
+    fs::path pkg2 = tempDir / "pkg2.lgx";
+    fs::path merged = tempDir / "merged.lgx";
+
+    createSingleVariantPackage(lgxBinary.string(), pkg1, "pkg1", "linux-amd64", "lib1");
+    createSingleVariantPackage(lgxBinary.string(), pkg2, "pkg2", "darwin-arm64", "lib2");
+
+    std::string output;
+    int exitCode = runLgx(
+        "merge " + pkg1.string() + " " + pkg2.string() +
+        " -o " + merged.string() + " -y",
+        &output
+    );
+
+    EXPECT_NE(exitCode, 0);
+    EXPECT_NE(output.find("mismatch"), std::string::npos);
+}
+
+// Test: lgx merge with too few arguments
+TEST_F(CLITest, MergeCommand_TooFewArgs) {
+    fs::path pkg1 = tempDir / "pkg1.lgx";
+    createSingleVariantPackage(lgxBinary.string(), pkg1, "test", "linux-amd64", "lib");
+
+    std::string output;
+    int exitCode = runLgx("merge " + pkg1.string(), &output);
+
+    EXPECT_NE(exitCode, 0);
+    EXPECT_NE(output.find("At least two"), std::string::npos);
+}
+
+// Test: lgx merge three packages
+TEST_F(CLITest, MergeCommand_ThreePackages) {
+    fs::path pkg1 = tempDir / "pkg1.lgx";
+    fs::path pkg2 = tempDir / "pkg2.lgx";
+    fs::path pkg3 = tempDir / "pkg3.lgx";
+    fs::path merged = tempDir / "merged.lgx";
+
+    createSingleVariantPackage(lgxBinary.string(), pkg1, "test", "linux-amd64", "linux amd64");
+    createSingleVariantPackage(lgxBinary.string(), pkg2, "test", "linux-arm64", "linux arm64");
+    createSingleVariantPackage(lgxBinary.string(), pkg3, "test", "darwin-arm64", "darwin arm64");
+
+    std::string output;
+    int exitCode = runLgx(
+        "merge " + pkg1.string() + " " + pkg2.string() + " " + pkg3.string() +
+        " -o " + merged.string() + " -y",
+        &output
+    );
+
+    EXPECT_EQ(exitCode, 0);
+    EXPECT_TRUE(fs::exists(merged));
+
+    // Verify the merged package is valid
+    exitCode = runLgx("verify " + merged.string(), &output);
+    EXPECT_EQ(exitCode, 0);
+}
+
+// =============================================================================
+// Multi-variant package workflow
+// =============================================================================
+
 // Test: Multi-variant package workflow
 // Verifies creating a package with multiple variants
 // Commands: lgx create, lgx add (multiple), lgx verify

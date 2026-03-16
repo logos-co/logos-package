@@ -121,6 +121,13 @@ public:
     std::set<std::string> getVariants() const;
     
     /**
+     * Compare metadata fields with another manifest, ignoring variant-specific
+     * fields (main). Returns a ValidationResult with an error for each
+     * mismatching field.
+     */
+    ValidationResult compareMetadata(const Manifest& other) const;
+
+    /**
      * Check if manifest version is supported.
      */
     static bool isVersionSupported(const std::string& version);
