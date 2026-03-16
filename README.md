@@ -45,6 +45,20 @@ Validate a package against the LGX specification:
 lgx verify mymodule.lgx
 ```
 
+### Merge Packages
+
+Merge multiple single-variant `.lgx` packages into one multi-variant package:
+
+```bash
+lgx merge linux.lgx darwin.lgx -o mymodule.lgx
+```
+
+All input packages must have identical manifests (except for the variant-specific `main` field). Fails on duplicate variants unless `--skip-duplicates` is used:
+
+```bash
+lgx merge pkg1.lgx pkg2.lgx pkg3.lgx --skip-duplicates -o mymodule.lgx -y
+```
+
 ### Inspect Package Contents
 
 Since `.lgx` files are just `tar.gz` archives:
@@ -61,6 +75,7 @@ tar -tzf mymodule.lgx
 | `lgx add <pkg> --variant <v> --files <path> [--main <relpath>] [-y]` | Add files to a variant |
 | `lgx remove <pkg> --variant <v> [-y]` | Remove a variant |
 | `lgx extract <pkg> [--variant <v>] [--output <dir>]` | Extract variant contents |
+| `lgx merge <pkg1> <pkg2> ... [-o <output>] [--skip-duplicates] [-y]` | Merge packages into one |
 | `lgx verify <pkg>` | Validate package structure |
 | `lgx sign <pkg>` | Sign package (TODO) |
 | `lgx publish <pkg>` | Publish package (TODO) |
