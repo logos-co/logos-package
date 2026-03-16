@@ -7,9 +7,9 @@ namespace lgx {
 /**
  * Merge command: lgx merge <pkg1.lgx> <pkg2.lgx> ... [-o <output.lgx>] [-y/--yes]
  *
- * Merges multiple single-variant .lgx packages into one multi-variant package.
+ * Merges variants from multiple .lgx packages into one multi-variant package.
  * Validates that manifests are identical (ignoring variant-specific fields like main),
- * and fails on duplicate variants.
+ * and by default fails on duplicate variants (or skips them when --skip-duplicates is used).
  */
 class MergeCommand : public Command {
 public:
