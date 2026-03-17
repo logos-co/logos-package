@@ -116,6 +116,7 @@ add_executable(lgx
     src/commands/verify_command.cpp
     src/commands/sign_command.cpp
     src/commands/publish_command.cpp
+    src/commands/merge_command.cpp
 )
 
 target_link_libraries(lgx PRIVATE lgx_core)

@@ -22,6 +22,7 @@ logos-package/
 │   │   ├── remove_command.cpp/h
 │   │   ├── extract_command.cpp/h
 │   │   ├── verify_command.cpp/h
+│   │   ├── merge_command.cpp/h
 │   │   ├── sign_command.cpp/h
 │   │   └── publish_command.cpp/h
 │   └── core/                   # Core library
@@ -167,6 +168,7 @@ logos-package/
 | `removeMain(variant)` | Remove main entry |
 | `getMain(variant) → optional<string>` | Get main entry (case-insensitive) |
 | `getVariants() → set<string>` | Get all variant names from main |
+| `compareMetadata(other) → ValidationResult` | Compare non-variant fields with another manifest |
 | `isVersionSupported(version) → bool` | Check if manifest version is supported |
 
 ### Package
@@ -398,6 +400,38 @@ lgx verify mymodule.lgx
 # Package is valid: mymodule.lgx
 ```
 
+### lgx merge
+
+Merge multiple `.lgx` packages into a single multi-variant package.
+
+```
+lgx merge <pkg1.lgx> <pkg2.lgx> ... [-o <output.lgx>] [--skip-duplicates] [-y/--yes]
+```
+
+**Arguments:**
+- `pkg1.lgx`, `pkg2.lgx`, ... - Two or more input package files
+- `--output, -o` - (Optional) Output path (defaults to `<name>.lgx`)
+- `--skip-duplicates` - (Optional) Warn and skip duplicate variants instead of failing
+- `--yes, -y` - Skip confirmation prompts
+
+**Behavior:**
+- All input manifests must match (ignoring the variant-specific `main` field)
+- By default, fails if any variant appears in more than one input package
+- With `--skip-duplicates`, keeps the first occurrence and warns about duplicates
+- Creates a fresh output package and adds each variant via the standard `addVariant` flow
+
+**Examples:**
+```bash
+# Merge two single-variant packages
+lgx merge linux.lgx darwin.lgx -o mymodule.lgx
+
+# Merge three packages, skip confirmation
+lgx merge linux-amd64.lgx linux-arm64.lgx darwin-arm64.lgx -o mymodule.lgx -y
+
+# Merge with duplicate tolerance
+lgx merge pkg1.lgx pkg2.lgx --skip-duplicates -y
+```
+
 ### lgx sign
 
 Sign a package (not implemented in v0.1).
@@ -447,11 +481,15 @@ lgx publish <pkg.lgx>
    │     └─...                    │
    └──────────────────────────────┘
 
-3. VERIFY
+3. MERGE (alternative to step 2 — combine per-platform CI outputs)
+   lgx merge linux-amd64.lgx darwin-arm64.lgx -o mymodule.lgx
+   → Validates manifests match, combines all variants
+
+4. VERIFY
    lgx verify mymodule.lgx
    → Validates structure, manifest, completeness
 
-4. EXTRACT (for consumption)
+5. EXTRACT (for consumption)
    lgx extract mymodule.lgx --variant linux-amd64 --output ./extracted
    ┌──────────────────────────────┐
    │ ./extracted/                 │
@@ -459,7 +497,7 @@ lgx publish <pkg.lgx>
    │   └─lib.so                   │
    └──────────────────────────────┘
 
-5. DISTRIBUTE
+6. DISTRIBUTE
    (share mymodule.lgx)
 ```
 
@@ -638,6 +676,22 @@ lgx verify mylib.lgx
 
 # Inspect contents
 tar -tzf mylib.lgx
+```
+
+### Merging Per-Platform CI Outputs
+
+When each platform builds a single-variant `.lgx` in CI, merge them into a single distributable package:
+
+```bash
+# Each CI job produces a single-variant package:
+#   linux-amd64/mylib.lgx   (contains linux-amd64 variant only)
+#   darwin-arm64/mylib.lgx  (contains darwin-arm64 variant only)
+
+# Merge into one multi-variant package
+lgx merge linux-amd64/mylib.lgx darwin-arm64/mylib.lgx -o mylib.lgx -y
+
+# Verify the result
+lgx verify mylib.lgx
 ```
 
 ### Using the Library Programmatically

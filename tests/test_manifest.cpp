@@ -372,9 +372,95 @@ TEST(ManifestTest, IsVersionSupported_Invalid) {
 
 TEST(ManifestTest, DefaultConstructor) {
     Manifest m;
-    
+
     EXPECT_EQ(m.manifestVersion, Manifest::CURRENT_VERSION);
     EXPECT_TRUE(m.name.empty());
     EXPECT_TRUE(m.version.empty());
     EXPECT_TRUE(m.main.empty());
+}
+
+// =============================================================================
+// CompareMetadata Tests
+// =============================================================================
+
+TEST(ManifestTest, CompareMetadata_IdenticalManifests) {
+    auto a = Manifest::fromJson(VALID_MANIFEST_JSON);
+    auto b = Manifest::fromJson(VALID_MANIFEST_JSON);
+    ASSERT_TRUE(a.has_value());
+    ASSERT_TRUE(b.has_value());
+
+    auto result = a->compareMetadata(*b);
+    EXPECT_TRUE(result.valid);
+    EXPECT_TRUE(result.errors.empty());
+}
+
+TEST(ManifestTest, CompareMetadata_DifferentMainOnly) {
+    auto a = Manifest::fromJson(VALID_MANIFEST_JSON);
+    auto b = Manifest::fromJson(VALID_MANIFEST_JSON);
+    ASSERT_TRUE(a.has_value());
+    ASSERT_TRUE(b.has_value());
+
+    // Change the main field — should still match
+    b->main.clear();
+    b->setMain("web", "index.js");
+
+    auto result = a->compareMetadata(*b);
+    EXPECT_TRUE(result.valid);
+}
+
+TEST(ManifestTest, CompareMetadata_DifferentName) {
+    auto a = Manifest::fromJson(VALID_MANIFEST_JSON);
+    auto b = Manifest::fromJson(VALID_MANIFEST_JSON);
+    ASSERT_TRUE(a.has_value());
+    ASSERT_TRUE(b.has_value());
+
+    b->name = "otherpkg";
+
+    auto result = a->compareMetadata(*b);
+    EXPECT_FALSE(result.valid);
+    ASSERT_FALSE(result.errors.empty());
+    EXPECT_NE(result.errors[0].find("name"), std::string::npos);
+}
+
+TEST(ManifestTest, CompareMetadata_DifferentVersion) {
+    auto a = Manifest::fromJson(VALID_MANIFEST_JSON);
+    auto b = Manifest::fromJson(VALID_MANIFEST_JSON);
+    ASSERT_TRUE(a.has_value());
+    ASSERT_TRUE(b.has_value());
+
+    b->version = "2.0.0";
+
+    auto result = a->compareMetadata(*b);
+    EXPECT_FALSE(result.valid);
+    ASSERT_FALSE(result.errors.empty());
+    EXPECT_NE(result.errors[0].find("version"), std::string::npos);
+}
+
+TEST(ManifestTest, CompareMetadata_DifferentDependencies) {
+    auto a = Manifest::fromJson(VALID_MANIFEST_JSON);
+    auto b = Manifest::fromJson(VALID_MANIFEST_JSON);
+    ASSERT_TRUE(a.has_value());
+    ASSERT_TRUE(b.has_value());
+
+    b->dependencies.push_back("extra-dep");
+
+    auto result = a->compareMetadata(*b);
+    EXPECT_FALSE(result.valid);
+    ASSERT_FALSE(result.errors.empty());
+    EXPECT_NE(result.errors[0].find("dependencies"), std::string::npos);
+}
+
+TEST(ManifestTest, CompareMetadata_MultipleDifferences) {
+    auto a = Manifest::fromJson(VALID_MANIFEST_JSON);
+    auto b = Manifest::fromJson(VALID_MANIFEST_JSON);
+    ASSERT_TRUE(a.has_value());
+    ASSERT_TRUE(b.has_value());
+
+    b->name = "otherpkg";
+    b->version = "2.0.0";
+    b->author = "Other Author";
+
+    auto result = a->compareMetadata(*b);
+    EXPECT_FALSE(result.valid);
+    EXPECT_GE(result.errors.size(), 3);
 }

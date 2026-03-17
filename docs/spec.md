@@ -244,6 +244,39 @@ lgx extract <pkg.lgx> [--variant <v>] [--output <dir>]
 - `-v` for `--variant`
 - `-o` for `--output`
 
+### Package Merge Workflow
+
+```
+lgx merge <pkg1.lgx> <pkg2.lgx> ... [-o <output.lgx>] [--skip-duplicates] [-y]
+```
+
+1. Verify all input package files exist; if any missing, exit with error
+2. Load all input packages
+3. Compare manifests across all inputs, ignoring the `main` field (which is variant-specific):
+   - All non-variant fields must be identical (`manifestVersion`, `name`, `version`, `description`, `author`, `type`, `category`, `icon`, `dependencies`)
+   - If any mismatch is found, report all mismatching fields and exit with error
+4. Check for duplicate variants across all input packages:
+   - By default, exit with error if any variant appears in more than one input
+   - With `--skip-duplicates`: warn and keep only the first occurrence
+5. Determine output path:
+   - Use `--output` if provided
+   - Otherwise default to `<name>.lgx` (from the manifest name)
+6. If output file exists, prompt for confirmation (unless `-y`)
+7. Create a fresh skeleton package with the shared metadata
+8. For each input package, for each variant:
+   - Extract variant files to a temporary directory
+   - Add variant to the output package using the standard `addVariant` flow
+   - Preserve the `main` entry from the source package
+9. Save merged package
+10. Clean up temporary files
+
+**Manifest Comparison:**
+The merge command compares all manifest fields except `main`, which is expected to differ across platform-specific builds. This ensures the merged package represents the same logical module across all variants.
+
+**Option Aliases:**
+- `-o` for `--output`
+- `-y` for `--yes`
+
 ### Verification Workflow
 
 ```

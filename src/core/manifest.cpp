@@ -251,6 +251,31 @@ bool Manifest::isVersionSupported(const std::string& version) {
     return major == "0";
 }
 
+Manifest::ValidationResult Manifest::compareMetadata(const Manifest& other) const {
+    ValidationResult result = ValidationResult::ok();
+
+    if (manifestVersion != other.manifestVersion)
+        result.addError("manifestVersion: '" + manifestVersion + "' vs '" + other.manifestVersion + "'");
+    if (name != other.name)
+        result.addError("name: '" + name + "' vs '" + other.name + "'");
+    if (version != other.version)
+        result.addError("version: '" + version + "' vs '" + other.version + "'");
+    if (description != other.description)
+        result.addError("description differs");
+    if (author != other.author)
+        result.addError("author: '" + author + "' vs '" + other.author + "'");
+    if (type != other.type)
+        result.addError("type: '" + type + "' vs '" + other.type + "'");
+    if (category != other.category)
+        result.addError("category: '" + category + "' vs '" + other.category + "'");
+    if (icon != other.icon)
+        result.addError("icon: '" + icon + "' vs '" + other.icon + "'");
+    if (dependencies != other.dependencies)
+        result.addError("dependencies differ");
+
+    return result;
+}
+
 std::string Manifest::getLastError() {
     return lastError_;
 }
