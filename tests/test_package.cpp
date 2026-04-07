@@ -992,7 +992,7 @@ TEST_F(PackageTest, RemoveVariant_ClearsSignature) {
     EXPECT_FALSE(pkg->isSigned());
 }
 
-TEST_F(PackageTest, SignPackage_EmptyPackage_Fails) {
+TEST_F(PackageTest, SignPackage_EmptyPackage_Succeeds) {
     ASSERT_TRUE(crypto::init());
 
     fs::path pkgPath = tempDir / "test.lgx";
@@ -1001,9 +1001,11 @@ TEST_F(PackageTest, SignPackage_EmptyPackage_Fails) {
     auto pkg = Package::load(pkgPath);
     ASSERT_TRUE(pkg.has_value());
 
+    // Empty skeleton is structurally valid, so signing succeeds
     auto kp = crypto::generateKeypair();
     auto result = pkg->signPackage(kp.secretKey);
-    EXPECT_FALSE(result.success);
+    EXPECT_TRUE(result.success);
+    EXPECT_TRUE(pkg->isSigned());
 }
 
 TEST_F(PackageTest, Verify_SignedPackage_ValidHashes) {

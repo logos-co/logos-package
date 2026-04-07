@@ -165,9 +165,9 @@ public:
 
     /**
      * Sign the package with the given secret key.
-     * Computes Merkle tree hashes for all content, writes them into
-     * manifest.hashes, signs manifest.toJson() bytes, and stores
-     * the signature in manifest.sig.
+     * Validates the package first (structure + content hashes must be
+     * valid), then signs manifest.toJson() bytes and stores the
+     * signature in manifest.sig.
      *
      * @param sk Ed25519 secret key
      * @param signerName Optional display name for signer metadata

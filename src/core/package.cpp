@@ -684,10 +684,12 @@ Package::Result Package::signPackage(const crypto::SecretKey& sk,
         return Result::fail("Failed to initialize crypto library");
     }
 
-    // 1. Recompute Merkle tree hashes
-    recomputeHashes();
-    if (manifest_.hashes.empty()) {
-        return Result::fail("No content to hash (no variant or other directories)");
+    // 1. Validate package (structure + hashes)
+    auto validation = validatePackage();
+    if (!validation.valid) {
+        std::string err = validation.errors.empty() ? "Package validation failed"
+                          : validation.errors[0];
+        return Result::fail("Cannot sign invalid package: " + err);
     }
 
     // 2. Get deterministic manifest JSON bytes
