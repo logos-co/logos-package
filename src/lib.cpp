@@ -344,7 +344,7 @@ LGX_EXPORT lgx_signature_info_t lgx_verify_signature(
     auto sigInfo = pkg_opt->verifySignature();
     info.is_signed = sigInfo.is_signed;
     info.signature_valid = sigInfo.signature_valid;
-    info.hashes_valid = sigInfo.hashes_valid;
+    info.package_valid = sigInfo.package_valid;
     info.signer_did = sigInfo.signer_did.empty() ? nullptr : strdup_cpp(sigInfo.signer_did);
     info.signer_name = sigInfo.signer_name.empty() ? nullptr : strdup_cpp(sigInfo.signer_name);
     info.signer_url = sigInfo.signer_url.empty() ? nullptr : strdup_cpp(sigInfo.signer_url);

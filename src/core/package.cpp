@@ -174,112 +174,102 @@ Package::Result Package::save(const std::filesystem::path& lgxPath) const {
     return Result::ok();
 }
 
-Package::VerifyResult Package::verify(const std::filesystem::path& lgxPath) {
+Package::VerifyResult Package::validatePackage() const {
     VerifyResult result = VerifyResult::ok();
-    
-    // Load package
-    auto pkgOpt = load(lgxPath);
-    if (!pkgOpt) {
-        result.valid = false;
-        result.errors.push_back(lastError_);
-        return result;
-    }
-    
-    const Package& pkg = *pkgOpt;
-    
+
     // Validate manifest
-    auto manifestValidation = pkg.manifest_.validate();
+    auto manifestValidation = manifest_.validate();
     if (!manifestValidation.valid) {
         result.valid = false;
         for (const auto& err : manifestValidation.errors) {
             result.errors.push_back("Manifest: " + err);
         }
     }
-    
+
     // Check root layout restrictions
     std::set<std::string> foundRoots;
     std::set<std::string> foundVariants;
     bool hasManifest = false;
     bool hasVariantsDir = false;
-    
-    for (const auto& entry : pkg.entries_) {
+
+    for (const auto& entry : entries_) {
         std::string rootComponent = PathNormalizer::getRootComponent(entry.path);
-        
+
         // Check if root entry is allowed
         if (ALLOWED_ROOT_ENTRIES.find(rootComponent) == ALLOWED_ROOT_ENTRIES.end()) {
             result.valid = false;
             result.errors.push_back("Forbidden root entry: " + rootComponent);
         }
-        
+
         if (entry.path == "manifest.json") {
             hasManifest = true;
         }
-        
+
         if (rootComponent == "variants") {
             hasVariantsDir = true;
-            
+
             // Check variant structure
             auto pathComponents = PathNormalizer::splitPath(entry.path);
             if (pathComponents.size() >= 2) {
                 std::string variantName = PathNormalizer::toLowercase(pathComponents[1]);
                 foundVariants.insert(variantName);
             }
-            
+
             // Check that nothing is directly under variants/ (only directories)
             if (pathComponents.size() == 2 && !entry.isDirectory) {
                 result.valid = false;
                 result.errors.push_back("File directly under variants/: " + entry.path);
             }
         }
-        
+
         // Validate path
         auto pathValidation = PathNormalizer::validateArchivePath(entry.path);
         if (!pathValidation.valid) {
             result.valid = false;
             result.errors.push_back("Invalid path '" + entry.path + "': " + pathValidation.error);
         }
-        
+
         // Check for forbidden file types (handled by tar reader, but double-check)
         // TarReader already filters these, but we verify the entries are regular files or dirs
     }
-    
+
     if (!hasManifest) {
         result.valid = false;
         result.errors.push_back("Missing manifest.json");
     }
-    
+
     if (!hasVariantsDir) {
         result.valid = false;
         result.errors.push_back("Missing variants/ directory");
     }
-    
+
     // Validate completeness (variants <-> main mapping)
-    auto completenessResult = pkg.manifest_.validateCompleteness(foundVariants);
+    auto completenessResult = manifest_.validateCompleteness(foundVariants);
     if (!completenessResult.valid) {
         result.valid = false;
         for (const auto& err : completenessResult.errors) {
             result.errors.push_back(err);
         }
     }
-    
+
     // Verify each main entry points to an existing regular file
-    for (const auto& [variant, mainPath] : pkg.manifest_.main) {
+    for (const auto& [variant, mainPath] : manifest_.main) {
         std::string fullPath = "variants/" + variant + "/" + mainPath;
-        
+
         bool found = false;
-        for (const auto& entry : pkg.entries_) {
+        for (const auto& entry : entries_) {
             // Normalize both paths for comparison
             std::string entryPath = entry.path;
             while (!entryPath.empty() && entryPath.back() == '/') {
                 entryPath.pop_back();
             }
-            
+
             if (entryPath == fullPath && !entry.isDirectory) {
                 found = true;
                 break;
             }
         }
-        
+
         if (!found) {
             result.valid = false;
             result.errors.push_back("main[" + variant + "] points to non-existent file: " + mainPath);
@@ -288,17 +278,17 @@ Package::VerifyResult Package::verify(const std::filesystem::path& lgxPath) {
 
     // Verify content hashes (mandatory when package has content)
     if (crypto::init()) {
-        auto recomputedHashes = crypto::computeMerkleTree(pkg.entries_);
+        auto recomputedHashes = crypto::computeMerkleTree(entries_);
         bool hasContent = !recomputedHashes.empty();
 
-        if (hasContent && pkg.manifest_.hashes.empty()) {
+        if (hasContent && manifest_.hashes.empty()) {
             result.valid = false;
             result.errors.push_back("Missing content hashes in manifest");
         } else if (hasContent) {
-            auto rootIt = pkg.manifest_.hashes.find("root");
+            auto rootIt = manifest_.hashes.find("root");
             auto recomputedRootIt = recomputedHashes.find("root");
 
-            if (rootIt == pkg.manifest_.hashes.end()) {
+            if (rootIt == manifest_.hashes.end()) {
                 result.valid = false;
                 result.errors.push_back("Missing 'root' hash in manifest");
             } else if (recomputedRootIt == recomputedHashes.end()) {
@@ -312,6 +302,19 @@ Package::VerifyResult Package::verify(const std::filesystem::path& lgxPath) {
     }
 
     return result;
+}
+
+Package::VerifyResult Package::verify(const std::filesystem::path& lgxPath) {
+    // Load package
+    auto pkgOpt = load(lgxPath);
+    if (!pkgOpt) {
+        VerifyResult result;
+        result.valid = false;
+        result.errors.push_back(lastError_);
+        return result;
+    }
+
+    return pkgOpt->validatePackage();
 }
 
 Package::Result Package::addVariant(
@@ -713,7 +716,17 @@ Package::SignatureInfo Package::verifySignature() const {
     SignatureInfo info{};
     info.is_signed = false;
     info.signature_valid = false;
-    info.hashes_valid = false;
+    info.package_valid = false;
+
+    // Validate package structure and content hashes first
+    auto pkgValidation = validatePackage();
+    if (!pkgValidation.valid) {
+        info.package_valid = false;
+        info.error = pkgValidation.errors.empty() ? "Package validation failed"
+                     : pkgValidation.errors[0];
+        return info;
+    }
+    info.package_valid = true;
 
     if (!manifestSig_.has_value()) {
         return info;
@@ -756,53 +769,6 @@ Package::SignatureInfo Package::verifySignature() const {
     }
 
     info.signature_valid = true;
-
-    // Verify Merkle tree hashes
-    if (manifest_.hashes.empty()) {
-        info.error = "Missing content hashes in manifest";
-        return info;
-    }
-
-    auto recomputedHashes = crypto::computeMerkleTree(entries_);
-
-    // Check that root hash matches
-    auto rootIt = manifest_.hashes.find("root");
-    auto recomputedRootIt = recomputedHashes.find("root");
-
-    if (rootIt == manifest_.hashes.end()) {
-        info.error = "Missing 'root' hash in manifest";
-        return info;
-    }
-    if (recomputedRootIt == recomputedHashes.end()) {
-        info.error = "Cannot compute root hash (no hashable content)";
-        return info;
-    }
-
-    if (rootIt->second != recomputedRootIt->second) {
-        // Walk the tree to find which directory was tampered with
-        for (const auto& [path, hash] : manifest_.hashes) {
-            auto it = recomputedHashes.find(path);
-            if (it == recomputedHashes.end()) {
-                info.error = "Hash entry '" + path + "' not found in recomputed tree";
-                return info;
-            }
-            if (it->second != hash) {
-                info.error = "Hash mismatch for '" + path + "'";
-                return info;
-            }
-        }
-        // Check for entries in recomputed that aren't in manifest
-        for (const auto& [path, hash] : recomputedHashes) {
-            if (manifest_.hashes.find(path) == manifest_.hashes.end()) {
-                info.error = "Unhashed directory found: '" + path + "'";
-                return info;
-            }
-        }
-        info.error = "Root hash mismatch (unknown cause)";
-        return info;
-    }
-
-    info.hashes_valid = true;
     return info;
 }
 

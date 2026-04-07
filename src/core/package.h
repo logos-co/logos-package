@@ -155,7 +155,7 @@ public:
     struct SignatureInfo {
         bool is_signed;           // manifest.sig present
         bool signature_valid;     // Ed25519 signature verifies
-        bool hashes_valid;        // all Merkle tree hashes match recomputed values
+        bool package_valid;       // package structure and content hashes are valid
         std::string signer_did;   // did:jwk:... string
         std::string signer_name;  // from manifest.sig signer.name (self-asserted)
         std::string signer_url;   // from manifest.sig signer.url (self-asserted)
@@ -179,7 +179,19 @@ public:
                        const std::string& signerUrl = "");
 
     /**
-     * Verify the package signature and content hashes.
+     * Validate package structure and content hashes (non-static version).
+     * Runs the same checks as verify() but on the already-loaded package.
+     *
+     * @return VerifyResult with all validation errors/warnings
+     */
+    VerifyResult validatePackage() const;
+
+    /**
+     * Verify the package signature.
+     * First validates the package (structure + hashes), then checks
+     * the Ed25519 signature. package_valid reflects whether the package
+     * itself is valid; signature_valid reflects whether the signature
+     * over manifest.json verifies.
      *
      * @return SignatureInfo with verification results
      */

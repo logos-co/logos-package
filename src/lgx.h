@@ -219,7 +219,7 @@ LGX_EXPORT const char* lgx_get_manifest_json(lgx_package_t pkg);
 typedef struct {
     bool is_signed;          /* manifest.sig present */
     bool signature_valid;    /* Ed25519 signature verifies */
-    bool hashes_valid;       /* all content hashes match */
+    bool package_valid;      /* package structure and content hashes are valid */
     const char* signer_did;  /* did:jwk:... or NULL */
     const char* signer_name; /* self-asserted display name, or NULL */
     const char* signer_url;  /* self-asserted URL, or NULL */

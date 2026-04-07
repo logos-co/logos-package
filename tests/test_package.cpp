@@ -872,7 +872,7 @@ TEST_F(PackageTest, SignPackage_WithMetadata) {
     auto sigInfo = pkg->verifySignature();
     EXPECT_TRUE(sigInfo.is_signed);
     EXPECT_TRUE(sigInfo.signature_valid);
-    EXPECT_TRUE(sigInfo.hashes_valid);
+    EXPECT_TRUE(sigInfo.package_valid);
     EXPECT_EQ(sigInfo.signer_name, "Test Publisher");
     EXPECT_EQ(sigInfo.signer_url, "https://example.com");
     EXPECT_EQ(sigInfo.signer_did, crypto::publicKeyToDid(kp.publicKey));
@@ -902,7 +902,7 @@ TEST_F(PackageTest, SignVerify_RoundTrip) {
     auto sigInfo = pkg2->verifySignature();
     EXPECT_TRUE(sigInfo.is_signed);
     EXPECT_TRUE(sigInfo.signature_valid);
-    EXPECT_TRUE(sigInfo.hashes_valid);
+    EXPECT_TRUE(sigInfo.package_valid);
     EXPECT_TRUE(sigInfo.error.empty()) << sigInfo.error;
 }
 
@@ -916,7 +916,7 @@ TEST_F(PackageTest, VerifySignature_Unsigned) {
     auto sigInfo = pkg->verifySignature();
     EXPECT_FALSE(sigInfo.is_signed);
     EXPECT_FALSE(sigInfo.signature_valid);
-    EXPECT_FALSE(sigInfo.hashes_valid);
+    EXPECT_TRUE(sigInfo.package_valid);  // Package structure is valid even if unsigned
 }
 
 TEST_F(PackageTest, VerifySignature_Did) {

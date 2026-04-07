@@ -72,8 +72,8 @@ int VerifyCommand::execute(const std::vector<std::string>& args) {
         return 1;
     }
 
-    if (!sigInfo.hashes_valid) {
-        printError("Content hash verification FAILED: " + sigInfo.error);
+    if (!sigInfo.package_valid) {
+        printError("Package validation FAILED: " + sigInfo.error);
         return 1;
     }
 
