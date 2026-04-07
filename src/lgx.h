@@ -291,6 +291,40 @@ LGX_EXPORT lgx_result_t lgx_keyring_add(
 LGX_EXPORT lgx_result_t lgx_keyring_remove(
     const char* keyring_dir, const char* name);
 
+/**
+ * A single trusted key entry from the keyring.
+ */
+typedef struct {
+    const char* name;         /* local keyring name */
+    const char* did;          /* did:jwk:... string */
+    const char* display_name; /* display name, or NULL */
+    const char* url;          /* URL, or NULL */
+    const char* added_at;     /* ISO 8601 timestamp, or NULL */
+} lgx_trusted_key_t;
+
+/**
+ * List of trusted keys from the keyring.
+ */
+typedef struct {
+    lgx_trusted_key_t* keys;  /* array of key entries */
+    size_t count;             /* number of entries */
+} lgx_keyring_list_t;
+
+/**
+ * List all trusted keys in the keyring.
+ *
+ * @param keyring_dir Path to keyring directory (NULL for default)
+ * @return List of trusted keys. Free with lgx_free_keyring_list().
+ */
+LGX_EXPORT lgx_keyring_list_t lgx_keyring_list(const char* keyring_dir);
+
+/**
+ * Free a keyring list structure.
+ *
+ * @param list Keyring list to free
+ */
+LGX_EXPORT void lgx_free_keyring_list(lgx_keyring_list_t list);
+
 /* Memory management */
 
 /**

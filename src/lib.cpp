@@ -525,6 +525,66 @@ LGX_EXPORT lgx_result_t lgx_keyring_remove(
     return {true, nullptr};
 }
 
+LGX_EXPORT lgx_keyring_list_t lgx_keyring_list(const char* keyring_dir) {
+    lgx_keyring_list_t result = {};
+
+    if (!lgx::crypto::init()) {
+        set_error("Failed to initialize crypto library");
+        return result;
+    }
+
+    std::filesystem::path krDir;
+    if (keyring_dir) {
+        krDir = keyring_dir;
+    } else {
+        krDir = lgx::crypto::Keyring::defaultDirectory();
+    }
+
+    if (krDir.empty()) {
+        set_error("Cannot determine keyring directory");
+        return result;
+    }
+
+    lgx::crypto::Keyring keyring(krDir);
+    auto keys = keyring.listKeys();
+
+    if (keys.empty()) {
+        return result;
+    }
+
+    result.keys = static_cast<lgx_trusted_key_t*>(
+        calloc(keys.size(), sizeof(lgx_trusted_key_t)));
+    if (!result.keys) {
+        return result;
+    }
+    result.count = keys.size();
+
+    for (size_t i = 0; i < keys.size(); ++i) {
+        result.keys[i].name = strdup_cpp(keys[i].name);
+        result.keys[i].did = strdup_cpp(keys[i].did);
+        result.keys[i].display_name = keys[i].displayName.empty()
+            ? nullptr : strdup_cpp(keys[i].displayName);
+        result.keys[i].url = keys[i].url.empty()
+            ? nullptr : strdup_cpp(keys[i].url);
+        result.keys[i].added_at = keys[i].addedAt.empty()
+            ? nullptr : strdup_cpp(keys[i].addedAt);
+    }
+
+    return result;
+}
+
+LGX_EXPORT void lgx_free_keyring_list(lgx_keyring_list_t list) {
+    if (!list.keys) return;
+    for (size_t i = 0; i < list.count; ++i) {
+        free(const_cast<char*>(list.keys[i].name));
+        free(const_cast<char*>(list.keys[i].did));
+        if (list.keys[i].display_name) free(const_cast<char*>(list.keys[i].display_name));
+        if (list.keys[i].url) free(const_cast<char*>(list.keys[i].url));
+        if (list.keys[i].added_at) free(const_cast<char*>(list.keys[i].added_at));
+    }
+    free(list.keys);
+}
+
 /* Memory management */
 
 LGX_EXPORT void lgx_free_package(lgx_package_t pkg) {
