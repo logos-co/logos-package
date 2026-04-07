@@ -64,6 +64,7 @@
             pkgs.zlib
             pkgs.icu
             pkgs.nlohmann_json
+            pkgs.libsodium
           ];
           
           shellHook = ''

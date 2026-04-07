@@ -11,7 +11,7 @@ thread_local std::string Package::lastError_;
 
 const std::set<std::string> Package::ALLOWED_ROOT_ENTRIES = {
     "manifest.json",
-    "manifest.cose",
+    "manifest.sig",
     "variants",
     "docs",
     "licenses"
@@ -76,7 +76,7 @@ std::optional<Package> Package::load(const std::filesystem::path& lgxPath) {
     Package pkg;
     pkg.entries_ = std::move(readResult.entries);
     
-    // Find and parse manifest
+    // Find and parse manifest and signature
     for (const auto& entry : pkg.entries_) {
         if (entry.path == "manifest.json" && !entry.isDirectory) {
             std::string jsonStr(entry.data.begin(), entry.data.end());
@@ -86,10 +86,17 @@ std::optional<Package> Package::load(const std::filesystem::path& lgxPath) {
                 return std::nullopt;
             }
             pkg.manifest_ = std::move(*manifestOpt);
-            break;
+        }
+        if (entry.path == "manifest.sig" && !entry.isDirectory) {
+            std::string sigStr(entry.data.begin(), entry.data.end());
+            auto sigOpt = crypto::ManifestSig::fromJson(sigStr);
+            if (sigOpt) {
+                pkg.manifestSig_ = std::move(*sigOpt);
+            }
+            // If parsing fails, we don't error out — just treat as unsigned
         }
     }
-    
+
     return pkg;
 }
 
@@ -99,14 +106,20 @@ Package::Result Package::save(const std::filesystem::path& lgxPath) const {
     // Add manifest first
     std::string manifestJson = manifest_.toJson();
     writer.addFile("manifest.json", manifestJson);
-    
+
+    // Add manifest.sig if present
+    if (manifestSig_.has_value()) {
+        std::string sigJson = manifestSig_->toJson();
+        writer.addFile("manifest.sig", sigJson);
+    }
+
     // Track which directories we've added
     std::set<std::string> addedDirs;
-    
+
     // Add all other entries
     for (const auto& entry : entries_) {
-        if (entry.path == "manifest.json") {
-            continue;  // Already added
+        if (entry.path == "manifest.json" || entry.path == "manifest.sig") {
+            continue;  // Already added above
         }
         
         // Ensure parent directories exist
@@ -272,7 +285,32 @@ Package::VerifyResult Package::verify(const std::filesystem::path& lgxPath) {
             result.errors.push_back("main[" + variant + "] points to non-existent file: " + mainPath);
         }
     }
-    
+
+    // Verify content hashes (mandatory when package has content)
+    if (crypto::init()) {
+        auto recomputedHashes = crypto::computeMerkleTree(pkg.entries_);
+        bool hasContent = !recomputedHashes.empty();
+
+        if (hasContent && pkg.manifest_.hashes.empty()) {
+            result.valid = false;
+            result.errors.push_back("Missing content hashes in manifest");
+        } else if (hasContent) {
+            auto rootIt = pkg.manifest_.hashes.find("root");
+            auto recomputedRootIt = recomputedHashes.find("root");
+
+            if (rootIt == pkg.manifest_.hashes.end()) {
+                result.valid = false;
+                result.errors.push_back("Missing 'root' hash in manifest");
+            } else if (recomputedRootIt == recomputedHashes.end()) {
+                result.valid = false;
+                result.errors.push_back("Cannot compute root hash (no hashable content)");
+            } else if (rootIt->second != recomputedRootIt->second) {
+                result.valid = false;
+                result.errors.push_back("Content hash mismatch: package content does not match manifest hashes");
+            }
+        }
+    }
+
     return result;
 }
 
@@ -345,20 +383,28 @@ Package::Result Package::addVariant(
     
     // Update manifest main
     manifest_.setMain(variantLc, resolvedMain);
-    
+
+    // Invalidate signature and recompute hashes (content changed)
+    clearSignature();
+    recomputeHashes();
+
     return Result::ok();
 }
 
 Package::Result Package::removeVariant(const std::string& variant) {
     std::string variantLc = PathNormalizer::toLowercase(variant);
-    
+
     if (!hasVariant(variantLc)) {
         return Result::fail("Variant does not exist: " + variant);
     }
     
     removeVariantEntries(variantLc);
     manifest_.removeMain(variantLc);
-    
+
+    // Invalidate signature and recompute hashes (content changed)
+    clearSignature();
+    recomputeHashes();
+
     return Result::ok();
 }
 
@@ -626,6 +672,150 @@ Package::Result Package::extractAll(const std::filesystem::path& outputDir) cons
     }
     
     return Result::ok();
+}
+
+Package::Result Package::signPackage(const crypto::SecretKey& sk,
+                                      const std::string& signerName,
+                                      const std::string& signerUrl) {
+    if (!crypto::init()) {
+        return Result::fail("Failed to initialize crypto library");
+    }
+
+    // 1. Recompute Merkle tree hashes
+    recomputeHashes();
+    if (manifest_.hashes.empty()) {
+        return Result::fail("No content to hash (no variant or other directories)");
+    }
+
+    // 2. Get deterministic manifest JSON bytes
+    std::string manifestJson = manifest_.toJson();
+    std::vector<uint8_t> manifestBytes(manifestJson.begin(), manifestJson.end());
+
+    // 4. Sign with Ed25519
+    auto signature = crypto::sign(manifestBytes, sk);
+
+    // 5. Build ManifestSig with DID
+    auto pk = crypto::extractPublicKey(sk);
+    crypto::ManifestSig sig;
+    sig.version = 1;
+    sig.algorithm = "ed25519";
+    sig.did = crypto::publicKeyToDid(pk);
+    sig.signature = crypto::base64Encode(signature.data(), signature.size());
+    sig.signerName = signerName;
+    sig.signerUrl = signerUrl;
+
+    manifestSig_ = std::move(sig);
+
+    return Result::ok();
+}
+
+Package::SignatureInfo Package::verifySignature() const {
+    SignatureInfo info{};
+    info.is_signed = false;
+    info.signature_valid = false;
+    info.hashes_valid = false;
+
+    if (!manifestSig_.has_value()) {
+        return info;
+    }
+
+    info.is_signed = true;
+    info.signer_did = manifestSig_->did;
+    info.signer_name = manifestSig_->signerName;
+    info.signer_url = manifestSig_->signerUrl;
+
+    if (!crypto::init()) {
+        info.error = "Failed to initialize crypto library";
+        return info;
+    }
+
+    // Extract public key from DID
+    auto pkOpt = crypto::didToPublicKey(manifestSig_->did);
+    if (!pkOpt) {
+        info.error = "Invalid DID in manifest.sig: " + manifestSig_->did;
+        return info;
+    }
+    crypto::PublicKey pk = *pkOpt;
+
+    // Decode signature
+    auto sigBytes = crypto::base64Decode(manifestSig_->signature);
+    if (!sigBytes || sigBytes->size() != crypto::SIGNATURE_SIZE) {
+        info.error = "Invalid signature in manifest.sig";
+        return info;
+    }
+    crypto::Signature sig;
+    std::copy(sigBytes->begin(), sigBytes->end(), sig.begin());
+
+    // Verify Ed25519 signature over manifest.toJson() bytes
+    std::string manifestJson = manifest_.toJson();
+    std::vector<uint8_t> manifestBytes(manifestJson.begin(), manifestJson.end());
+
+    if (!crypto::verify(manifestBytes, pk, sig)) {
+        info.error = "Ed25519 signature verification failed";
+        return info;
+    }
+
+    info.signature_valid = true;
+
+    // Verify Merkle tree hashes
+    if (manifest_.hashes.empty()) {
+        info.error = "Missing content hashes in manifest";
+        return info;
+    }
+
+    auto recomputedHashes = crypto::computeMerkleTree(entries_);
+
+    // Check that root hash matches
+    auto rootIt = manifest_.hashes.find("root");
+    auto recomputedRootIt = recomputedHashes.find("root");
+
+    if (rootIt == manifest_.hashes.end()) {
+        info.error = "Missing 'root' hash in manifest";
+        return info;
+    }
+    if (recomputedRootIt == recomputedHashes.end()) {
+        info.error = "Cannot compute root hash (no hashable content)";
+        return info;
+    }
+
+    if (rootIt->second != recomputedRootIt->second) {
+        // Walk the tree to find which directory was tampered with
+        for (const auto& [path, hash] : manifest_.hashes) {
+            auto it = recomputedHashes.find(path);
+            if (it == recomputedHashes.end()) {
+                info.error = "Hash entry '" + path + "' not found in recomputed tree";
+                return info;
+            }
+            if (it->second != hash) {
+                info.error = "Hash mismatch for '" + path + "'";
+                return info;
+            }
+        }
+        // Check for entries in recomputed that aren't in manifest
+        for (const auto& [path, hash] : recomputedHashes) {
+            if (manifest_.hashes.find(path) == manifest_.hashes.end()) {
+                info.error = "Unhashed directory found: '" + path + "'";
+                return info;
+            }
+        }
+        info.error = "Root hash mismatch (unknown cause)";
+        return info;
+    }
+
+    info.hashes_valid = true;
+    return info;
+}
+
+void Package::clearSignature() {
+    manifestSig_ = std::nullopt;
+}
+
+void Package::recomputeHashes() {
+    if (!crypto::init()) {
+        return;
+    }
+    auto hashes = crypto::computeMerkleTree(entries_);
+    manifest_.hashes = std::move(hashes);
 }
 
 } // namespace lgx

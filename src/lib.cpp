@@ -8,11 +8,14 @@
 #include "lgx.h"
 #include "core/package.h"
 #include "core/manifest.h"
+#include "crypto/signing.h"
+#include "crypto/keyring.h"
 
 #include <string>
 #include <vector>
 #include <memory>
 #include <cstring>
+#include <filesystem>
 
 /* Thread-local error storage */
 thread_local std::string g_last_error;
@@ -311,6 +314,215 @@ LGX_EXPORT const char* lgx_get_manifest_json(lgx_package_t pkg) {
     clear_error();
     pkg->manifest_json_cache = pkg->pkg->getManifest().toJson();
     return pkg->manifest_json_cache.c_str();
+}
+
+/* Signature functions */
+
+LGX_EXPORT lgx_signature_info_t lgx_verify_signature(
+    const char* lgx_path, const char* keyring_dir) {
+    lgx_signature_info_t info = {};
+
+    if (!lgx_path) {
+        set_error("Invalid argument: lgx_path cannot be NULL");
+        info.error = strdup_cpp(g_last_error);
+        return info;
+    }
+
+    if (!lgx::crypto::init()) {
+        set_error("Failed to initialize crypto library");
+        info.error = strdup_cpp(g_last_error);
+        return info;
+    }
+
+    auto pkg_opt = lgx::Package::load(lgx_path);
+    if (!pkg_opt) {
+        set_error("Failed to load package: " + std::string(lgx_path));
+        info.error = strdup_cpp(g_last_error);
+        return info;
+    }
+
+    auto sigInfo = pkg_opt->verifySignature();
+    info.is_signed = sigInfo.is_signed;
+    info.signature_valid = sigInfo.signature_valid;
+    info.hashes_valid = sigInfo.hashes_valid;
+    info.signer_did = sigInfo.signer_did.empty() ? nullptr : strdup_cpp(sigInfo.signer_did);
+    info.signer_name = sigInfo.signer_name.empty() ? nullptr : strdup_cpp(sigInfo.signer_name);
+    info.signer_url = sigInfo.signer_url.empty() ? nullptr : strdup_cpp(sigInfo.signer_url);
+    info.error = sigInfo.error.empty() ? nullptr : strdup_cpp(sigInfo.error);
+
+    // Check keyring for trust status
+    if (info.is_signed && info.signature_valid && !sigInfo.signer_did.empty()) {
+        std::filesystem::path krDir;
+        if (keyring_dir) {
+            krDir = keyring_dir;
+        } else {
+            krDir = lgx::crypto::Keyring::defaultDirectory();
+        }
+
+        if (!krDir.empty() && std::filesystem::exists(krDir)) {
+            lgx::crypto::Keyring keyring(krDir);
+            auto trusted = keyring.findByDid(sigInfo.signer_did);
+            if (trusted) {
+                info.trusted_as = strdup_cpp(trusted->name);
+            }
+        }
+    }
+
+    return info;
+}
+
+LGX_EXPORT void lgx_free_signature_info(lgx_signature_info_t info) {
+    if (info.signer_did) free(const_cast<char*>(info.signer_did));
+    if (info.signer_name) free(const_cast<char*>(info.signer_name));
+    if (info.signer_url) free(const_cast<char*>(info.signer_url));
+    if (info.trusted_as) free(const_cast<char*>(info.trusted_as));
+    if (info.error) free(const_cast<char*>(info.error));
+}
+
+LGX_EXPORT lgx_result_t lgx_sign(
+    const char* lgx_path, const char* secret_key_path,
+    const char* signer_name, const char* signer_url) {
+    if (!lgx_path || !secret_key_path) {
+        set_error("Invalid arguments: lgx_path and secret_key_path cannot be NULL");
+        return {false, g_last_error.c_str()};
+    }
+
+    if (!lgx::crypto::init()) {
+        set_error("Failed to initialize crypto library");
+        return {false, g_last_error.c_str()};
+    }
+
+    // Load secret key from file
+    std::filesystem::path skPath(secret_key_path);
+    auto keyName = skPath.stem().string();
+    auto keysDir = skPath.parent_path();
+
+    auto sk = lgx::crypto::Keyring::loadSecretKey(keysDir, keyName);
+    if (!sk) {
+        set_error("Failed to load secret key: " + lgx::crypto::Keyring::getLastError());
+        return {false, g_last_error.c_str()};
+    }
+
+    auto pkg_opt = lgx::Package::load(lgx_path);
+    if (!pkg_opt) {
+        set_error("Failed to load package: " + std::string(lgx_path));
+        return {false, g_last_error.c_str()};
+    }
+
+    std::string name = signer_name ? signer_name : "";
+    std::string url = signer_url ? signer_url : "";
+
+    auto signResult = pkg_opt->signPackage(*sk, name, url);
+    if (!signResult.success) {
+        set_error("Failed to sign package: " + signResult.error);
+        return {false, g_last_error.c_str()};
+    }
+
+    auto saveResult = pkg_opt->save(lgx_path);
+    if (!saveResult.success) {
+        set_error(saveResult.error);
+        return {false, g_last_error.c_str()};
+    }
+
+    return {true, nullptr};
+}
+
+LGX_EXPORT lgx_result_t lgx_keygen(
+    const char* name, const char* output_dir) {
+    if (!name) {
+        set_error("Invalid argument: name cannot be NULL");
+        return {false, g_last_error.c_str()};
+    }
+
+    if (!lgx::crypto::init()) {
+        set_error("Failed to initialize crypto library");
+        return {false, g_last_error.c_str()};
+    }
+
+    std::filesystem::path keysDir;
+    if (output_dir) {
+        keysDir = output_dir;
+    } else {
+        keysDir = lgx::crypto::Keyring::defaultKeysDirectory();
+    }
+
+    if (keysDir.empty()) {
+        set_error("Cannot determine keys directory");
+        return {false, g_last_error.c_str()};
+    }
+
+    auto kp = lgx::crypto::generateKeypair();
+    if (!lgx::crypto::Keyring::saveKeypair(keysDir, name, kp)) {
+        set_error("Failed to save keypair: " + lgx::crypto::Keyring::getLastError());
+        return {false, g_last_error.c_str()};
+    }
+
+    return {true, nullptr};
+}
+
+LGX_EXPORT lgx_result_t lgx_keyring_add(
+    const char* keyring_dir, const char* name, const char* did,
+    const char* display_name, const char* url) {
+    if (!name || !did) {
+        set_error("Invalid arguments: name and did cannot be NULL");
+        return {false, g_last_error.c_str()};
+    }
+
+    if (!lgx::crypto::init()) {
+        set_error("Failed to initialize crypto library");
+        return {false, g_last_error.c_str()};
+    }
+
+    std::filesystem::path krDir;
+    if (keyring_dir) {
+        krDir = keyring_dir;
+    } else {
+        krDir = lgx::crypto::Keyring::defaultDirectory();
+    }
+
+    if (krDir.empty()) {
+        set_error("Cannot determine keyring directory");
+        return {false, g_last_error.c_str()};
+    }
+
+    std::string dispName = display_name ? display_name : "";
+    std::string urlStr = url ? url : "";
+
+    lgx::crypto::Keyring keyring(krDir);
+    if (!keyring.addKey(name, did, dispName, urlStr)) {
+        set_error("Failed to add key: " + lgx::crypto::Keyring::getLastError());
+        return {false, g_last_error.c_str()};
+    }
+
+    return {true, nullptr};
+}
+
+LGX_EXPORT lgx_result_t lgx_keyring_remove(
+    const char* keyring_dir, const char* name) {
+    if (!name) {
+        set_error("Invalid argument: name cannot be NULL");
+        return {false, g_last_error.c_str()};
+    }
+
+    std::filesystem::path krDir;
+    if (keyring_dir) {
+        krDir = keyring_dir;
+    } else {
+        krDir = lgx::crypto::Keyring::defaultDirectory();
+    }
+
+    if (krDir.empty()) {
+        set_error("Cannot determine keyring directory");
+        return {false, g_last_error.c_str()};
+    }
+
+    lgx::crypto::Keyring keyring(krDir);
+    if (!keyring.removeKey(name)) {
+        set_error("Failed to remove key: " + lgx::crypto::Keyring::getLastError());
+        return {false, g_last_error.c_str()};
+    }
+
+    return {true, nullptr};
 }
 
 /* Memory management */

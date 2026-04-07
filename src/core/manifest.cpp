@@ -103,7 +103,16 @@ std::optional<Manifest> Manifest::fromJson(const std::string& jsonStr) {
             std::string normalizedKey = PathNormalizer::toLowercase(key);
             m.main[normalizedKey] = value.get<std::string>();
         }
-        
+
+        // Optional hashes field (present in signed packages)
+        if (j.contains("hashes") && j["hashes"].is_object()) {
+            for (auto& [key, value] : j["hashes"].items()) {
+                if (value.is_string()) {
+                    m.hashes[key] = value.get<std::string>();
+                }
+            }
+        }
+
         return m;
     } catch (const json::exception& e) {
         lastError_ = std::string("JSON parse error: ") + e.what();
@@ -125,13 +134,22 @@ std::string Manifest::toJson() const {
     j["icon"] = icon;
     j["dependencies"] = dependencies;
     
+    // hashes (only if non-empty, for backward compat with unsigned packages)
+    if (!hashes.empty()) {
+        json hashesObj = json::object();
+        for (const auto& [k, v] : hashes) {
+            hashesObj[k] = v;
+        }
+        j["hashes"] = hashesObj;
+    }
+
     // main as object with sorted keys
     json mainObj = json::object();
     for (const auto& [k, v] : main) {
         mainObj[k] = v;
     }
     j["main"] = mainObj;
-    
+
     // Serialize with 2-space indent, sorted keys
     return j.dump(2);
 }

@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 #include "core/package.h"
+#include "crypto/signing.h"
+#include "crypto/keyring.h"
 
 #include <filesystem>
 #include <fstream>
@@ -653,4 +655,375 @@ TEST_F(PackageTest, ExtractVariant_CaseInsensitive) {
     EXPECT_TRUE(result.success) << result.error;
     
     EXPECT_TRUE(fs::exists(extractDir / "linux-amd64" / "lib.so"));
+}
+
+// =============================================================================
+// Mandatory Hashes Tests
+// =============================================================================
+
+TEST_F(PackageTest, AddVariant_ComputesHashes) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    fs::path file = tempDir / "lib.so";
+    createTestFile(file, "library content");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->addVariant("linux-amd64", file);
+
+    // Hashes should be present after addVariant
+    EXPECT_FALSE(pkg->getManifest().hashes.empty());
+    EXPECT_TRUE(pkg->getManifest().hashes.count("root") > 0);
+    EXPECT_TRUE(pkg->getManifest().hashes.count("variants") > 0);
+    EXPECT_TRUE(pkg->getManifest().hashes.count("variants/linux-amd64") > 0);
+}
+
+TEST_F(PackageTest, AddVariant_HashesUpdateOnReplace) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    fs::path file1 = tempDir / "old.so";
+    createTestFile(file1, "old content");
+
+    auto pkg = Package::load(pkgPath);
+    pkg->addVariant("linux-amd64", file1);
+    auto hashesAfterFirst = pkg->getManifest().hashes;
+
+    // Replace with different content
+    fs::path file2 = tempDir / "new.so";
+    createTestFile(file2, "new different content");
+    pkg->addVariant("linux-amd64", file2);
+    auto hashesAfterSecond = pkg->getManifest().hashes;
+
+    // Hashes should change when content changes
+    EXPECT_NE(hashesAfterFirst["root"], hashesAfterSecond["root"]);
+}
+
+TEST_F(PackageTest, RemoveVariant_UpdatesHashes) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    fs::path file1 = tempDir / "lib1.so";
+    fs::path file2 = tempDir / "lib2.so";
+    createTestFile(file1, "content1");
+    createTestFile(file2, "content2");
+
+    auto pkg = Package::load(pkgPath);
+    pkg->addVariant("linux-amd64", file1);
+    pkg->addVariant("darwin-arm64", file2);
+    auto hashesWithTwo = pkg->getManifest().hashes;
+
+    pkg->removeVariant("linux-amd64");
+    auto hashesWithOne = pkg->getManifest().hashes;
+
+    // Root hash should change
+    EXPECT_NE(hashesWithTwo["root"], hashesWithOne["root"]);
+    // Removed variant hash should be gone
+    EXPECT_EQ(hashesWithOne.count("variants/linux-amd64"), 0u);
+    // Remaining variant hash should still exist
+    EXPECT_TRUE(hashesWithOne.count("variants/darwin-arm64") > 0);
+}
+
+TEST_F(PackageTest, Hashes_PersistThroughSaveLoad) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    fs::path file = tempDir / "lib.so";
+    createTestFile(file, "content");
+
+    auto pkg = Package::load(pkgPath);
+    pkg->addVariant("linux-amd64", file);
+    auto originalHashes = pkg->getManifest().hashes;
+    pkg->save(pkgPath);
+
+    // Reload and check hashes are preserved
+    auto pkg2 = Package::load(pkgPath);
+    ASSERT_TRUE(pkg2.has_value());
+    EXPECT_EQ(pkg2->getManifest().hashes, originalHashes);
+}
+
+TEST_F(PackageTest, Verify_UnsignedPackage_ChecksHashes) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    fs::path file = tempDir / "lib.so";
+    createTestFile(file, "content");
+
+    auto pkg = Package::load(pkgPath);
+    pkg->addVariant("linux-amd64", file);
+    pkg->save(pkgPath);
+
+    // Verify should pass for unsigned package with valid hashes
+    auto result = Package::verify(pkgPath);
+    EXPECT_TRUE(result.valid) << "Errors: " <<
+        (result.errors.empty() ? "none" : result.errors[0]);
+}
+
+TEST_F(PackageTest, ClearSignature_PreservesHashes) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    fs::path file = tempDir / "lib.so";
+    createTestFile(file, "content");
+
+    auto pkg = Package::load(pkgPath);
+    pkg->addVariant("linux-amd64", file);
+    auto hashesBeforeClear = pkg->getManifest().hashes;
+
+    pkg->clearSignature();
+
+    EXPECT_EQ(pkg->getManifest().hashes, hashesBeforeClear);
+    EXPECT_FALSE(pkg->getManifest().hashes.empty());
+}
+
+TEST_F(PackageTest, RecomputeHashes_EmptyPackage) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+
+    pkg->recomputeHashes();
+    // Empty skeleton has no hashable content (just variants/ dir)
+    EXPECT_TRUE(pkg->getManifest().hashes.empty());
+}
+
+TEST_F(PackageTest, RecomputeHashes_Idempotent) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    fs::path file = tempDir / "lib.so";
+    createTestFile(file, "content");
+
+    auto pkg = Package::load(pkgPath);
+    pkg->addVariant("linux-amd64", file);
+    auto hashes1 = pkg->getManifest().hashes;
+
+    pkg->recomputeHashes();
+    auto hashes2 = pkg->getManifest().hashes;
+
+    EXPECT_EQ(hashes1, hashes2);
+}
+
+TEST_F(PackageTest, Hashes_MultipleVariants) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    fs::path file1 = tempDir / "lib1.so";
+    fs::path file2 = tempDir / "lib2.dylib";
+    createTestFile(file1, "linux content");
+    createTestFile(file2, "darwin content");
+
+    auto pkg = Package::load(pkgPath);
+    pkg->addVariant("linux-amd64", file1);
+    pkg->addVariant("darwin-arm64", file2);
+
+    auto& hashes = pkg->getManifest().hashes;
+    EXPECT_TRUE(hashes.count("root") > 0);
+    EXPECT_TRUE(hashes.count("variants") > 0);
+    EXPECT_TRUE(hashes.count("variants/linux-amd64") > 0);
+    EXPECT_TRUE(hashes.count("variants/darwin-arm64") > 0);
+
+    // Each variant should have a different hash (different content)
+    EXPECT_NE(hashes["variants/linux-amd64"], hashes["variants/darwin-arm64"]);
+}
+
+// =============================================================================
+// Package Signing Tests
+// =============================================================================
+
+TEST_F(PackageTest, SignPackage_Basic) {
+    ASSERT_TRUE(crypto::init());
+
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    fs::path file = tempDir / "lib.so";
+    createTestFile(file, "library content");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->addVariant("linux-amd64", file);
+
+    auto kp = crypto::generateKeypair();
+    auto result = pkg->signPackage(kp.secretKey);
+    EXPECT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(pkg->isSigned());
+}
+
+TEST_F(PackageTest, SignPackage_WithMetadata) {
+    ASSERT_TRUE(crypto::init());
+
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    fs::path file = tempDir / "lib.so";
+    createTestFile(file, "content");
+
+    auto pkg = Package::load(pkgPath);
+    pkg->addVariant("linux-amd64", file);
+
+    auto kp = crypto::generateKeypair();
+    auto result = pkg->signPackage(kp.secretKey, "Test Publisher", "https://example.com");
+    EXPECT_TRUE(result.success);
+
+    // Verify signature info contains metadata
+    auto sigInfo = pkg->verifySignature();
+    EXPECT_TRUE(sigInfo.is_signed);
+    EXPECT_TRUE(sigInfo.signature_valid);
+    EXPECT_TRUE(sigInfo.hashes_valid);
+    EXPECT_EQ(sigInfo.signer_name, "Test Publisher");
+    EXPECT_EQ(sigInfo.signer_url, "https://example.com");
+    EXPECT_EQ(sigInfo.signer_did, crypto::publicKeyToDid(kp.publicKey));
+}
+
+TEST_F(PackageTest, SignVerify_RoundTrip) {
+    ASSERT_TRUE(crypto::init());
+
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    fs::path file = tempDir / "lib.so";
+    createTestFile(file, "content");
+
+    auto pkg = Package::load(pkgPath);
+    pkg->addVariant("linux-amd64", file);
+
+    auto kp = crypto::generateKeypair();
+    pkg->signPackage(kp.secretKey);
+    pkg->save(pkgPath);
+
+    // Load and verify
+    auto pkg2 = Package::load(pkgPath);
+    ASSERT_TRUE(pkg2.has_value());
+    EXPECT_TRUE(pkg2->isSigned());
+
+    auto sigInfo = pkg2->verifySignature();
+    EXPECT_TRUE(sigInfo.is_signed);
+    EXPECT_TRUE(sigInfo.signature_valid);
+    EXPECT_TRUE(sigInfo.hashes_valid);
+    EXPECT_TRUE(sigInfo.error.empty()) << sigInfo.error;
+}
+
+TEST_F(PackageTest, VerifySignature_Unsigned) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+
+    auto sigInfo = pkg->verifySignature();
+    EXPECT_FALSE(sigInfo.is_signed);
+    EXPECT_FALSE(sigInfo.signature_valid);
+    EXPECT_FALSE(sigInfo.hashes_valid);
+}
+
+TEST_F(PackageTest, VerifySignature_Did) {
+    ASSERT_TRUE(crypto::init());
+
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    fs::path file = tempDir / "lib.so";
+    createTestFile(file, "content");
+
+    auto pkg = Package::load(pkgPath);
+    pkg->addVariant("linux-amd64", file);
+
+    auto kp = crypto::generateKeypair();
+    std::string expectedDid = crypto::publicKeyToDid(kp.publicKey);
+
+    pkg->signPackage(kp.secretKey);
+
+    auto sigInfo = pkg->verifySignature();
+    EXPECT_EQ(sigInfo.signer_did, expectedDid);
+    EXPECT_EQ(sigInfo.signer_did.substr(0, 8), "did:jwk:");
+}
+
+TEST_F(PackageTest, AddVariant_ClearsSignature) {
+    ASSERT_TRUE(crypto::init());
+
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    fs::path file1 = tempDir / "lib1.so";
+    fs::path file2 = tempDir / "lib2.so";
+    createTestFile(file1, "content1");
+    createTestFile(file2, "content2");
+
+    auto pkg = Package::load(pkgPath);
+    pkg->addVariant("linux-amd64", file1);
+
+    auto kp = crypto::generateKeypair();
+    pkg->signPackage(kp.secretKey);
+    EXPECT_TRUE(pkg->isSigned());
+
+    // Adding another variant should clear the signature
+    pkg->addVariant("darwin-arm64", file2);
+    EXPECT_FALSE(pkg->isSigned());
+
+    // But hashes should still be present and updated
+    EXPECT_FALSE(pkg->getManifest().hashes.empty());
+    EXPECT_TRUE(pkg->getManifest().hashes.count("variants/darwin-arm64") > 0);
+}
+
+TEST_F(PackageTest, RemoveVariant_ClearsSignature) {
+    ASSERT_TRUE(crypto::init());
+
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    fs::path file1 = tempDir / "lib1.so";
+    fs::path file2 = tempDir / "lib2.so";
+    createTestFile(file1, "content1");
+    createTestFile(file2, "content2");
+
+    auto pkg = Package::load(pkgPath);
+    pkg->addVariant("linux-amd64", file1);
+    pkg->addVariant("darwin-arm64", file2);
+
+    auto kp = crypto::generateKeypair();
+    pkg->signPackage(kp.secretKey);
+    EXPECT_TRUE(pkg->isSigned());
+
+    // Removing a variant should clear the signature
+    pkg->removeVariant("darwin-arm64");
+    EXPECT_FALSE(pkg->isSigned());
+}
+
+TEST_F(PackageTest, SignPackage_EmptyPackage_Fails) {
+    ASSERT_TRUE(crypto::init());
+
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+
+    auto kp = crypto::generateKeypair();
+    auto result = pkg->signPackage(kp.secretKey);
+    EXPECT_FALSE(result.success);
+}
+
+TEST_F(PackageTest, Verify_SignedPackage_ValidHashes) {
+    ASSERT_TRUE(crypto::init());
+
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    fs::path file = tempDir / "lib.so";
+    createTestFile(file, "content");
+
+    auto pkg = Package::load(pkgPath);
+    pkg->addVariant("linux-amd64", file);
+
+    auto kp = crypto::generateKeypair();
+    pkg->signPackage(kp.secretKey, "Publisher", "https://example.com");
+    pkg->save(pkgPath);
+
+    // verify() (the static method) should pass
+    auto result = Package::verify(pkgPath);
+    EXPECT_TRUE(result.valid) << "Errors: " <<
+        (result.errors.empty() ? "none" : result.errors[0]);
 }

@@ -21,7 +21,8 @@ The format is designed to:
 | **USTAR** | Unix Standard TAR - a standardized tar archive format |
 | **Manifest** | The `manifest.json` file containing package metadata |
 | **Main** | The entry point file for each variant, specified in the manifest |
-| **COSE** | CBOR Object Signing and Encryption - reserved for future signature support |
+| **Ed25519** | An elliptic-curve digital signature algorithm used for package signing |
+| **Merkle Tree** | A hierarchical hash structure used to verify package content integrity |
 
 ## Domain Model
 
@@ -32,7 +33,7 @@ An LGX package (`.lgx` file) is a gzip-compressed tar archive with the following
 ```
 package.lgx (tar.gz)
 ├── manifest.json          # Required - package metadata
-├── manifest.cose          # Optional - reserved for signatures
+├── manifest.sig           # Optional - Ed25519 signature with DID identity
 ├── variants/              # Required - contains variant directories
 │   ├── <variant-1>/       # Variant directory (lowercase name)
 │   │   └── ...            # Variant contents
@@ -295,6 +296,7 @@ lgx verify <pkg.lgx>
 6. Completeness constraint satisfied (variants ↔ main)
 7. Each `main` entry points to existing regular file
 8. No forbidden file types present
+9. Content hashes present and valid (Merkle tree root hash matches recomputed value)
 
 **Output:**
 - Errors: Validation failures that prevent package from being valid
@@ -322,22 +324,184 @@ Commands perform validation before operations:
 - Required option validation with clear error messages
 - Confirmation prompts for destructive operations (unless `-y` flag is used)
 
-## Future Work
+## Package Signing
 
-The following commands are implemented as stubs in v0.1 and will be fully implemented in future versions:
+### Overview
+
+Packages can be cryptographically signed using Ed25519 via libsodium. Signing creates a `manifest.sig` file containing the signer's DID (`did:jwk:...`), the Ed25519 signature over `manifest.json`, and optional signer metadata.
+
+### Content Hashes
+
+Content hashes (Merkle tree) are **always present** in `manifest.json`, regardless of whether the package is signed. They are automatically recomputed whenever package content is modified (adding/removing variants). The `lgx verify` command validates these hashes for all packages.
 
 ### Sign Command
 
 ```
-lgx sign <pkg.lgx>
+lgx sign <pkg.lgx> --key <name> [--name "Display Name"] [--url "https://..."]
 ```
 
-**Status:** Planned. Not implemented in v0.1. Always exits with error code 1.
+Signs a package by:
+1. Recomputing the Merkle tree of SHA-256 hashes over all archive content (excluding `manifest.json` and `manifest.sig`)
+2. Writing the hash tree into the `hashes` field of `manifest.json`
+3. Creating an Ed25519 detached signature over the exact bytes of `manifest.json`
+4. Writing `manifest.sig` with the signer's DID, signature, and optional metadata
 
-**Planned Behavior:**
-- Sign the package manifest using COSE (CBOR Object Signing and Encryption)
-- Write signature to `manifest.cose` in the package archive
-- Support for key management and signature verification
+The secret key is loaded from `~/.config/logos/keys/<name>.jwk`.
+
+### Keygen Command
+
+```
+lgx keygen --name <name>
+```
+
+Generates an Ed25519 signing keypair:
+- Secret key: `~/.config/logos/keys/<name>.jwk` (JWK format, permissions 0600)
+- Public key: `~/.config/logos/keys/<name>.pub` (SSH public key format)
+- DID: `~/.config/logos/keys/<name>.did` (plain text `did:jwk:...` string)
+
+Prints the `did:jwk:...` DID to stdout.
+
+#### Secret Key Format (JWK)
+
+```json
+{
+  "crv": "Ed25519",
+  "d": "<base64url-encoded 32-byte private seed>",
+  "kty": "OKP",
+  "x": "<base64url-encoded 32-byte public key>"
+}
+```
+
+Keys are sorted alphabetically for determinism. The `d` field contains the 32-byte Ed25519 seed (not libsodium's 64-byte expanded key).
+
+### Keyring Command
+
+```
+lgx keyring add <name> <did:jwk:...> [--display-name "..."] [--url "..."]
+lgx keyring remove <name>
+lgx keyring list
+```
+
+Manages trusted keys stored in `~/.config/logos/trusted-keys/` as `.json` files:
+
+```json
+{
+  "did": "did:jwk:eyJjcnYi...",
+  "name": "Logos Foundation",
+  "url": "https://logos.co",
+  "addedAt": "2026-04-06T12:00:00Z"
+}
+```
+
+### DID Identity
+
+Signers are identified by **DID (Decentralized Identifier)** strings using the `did:jwk` method:
+
+```
+did:jwk:<base64url({"crv":"Ed25519","kty":"OKP","x":"<base64url-pubkey>"})>
+```
+
+Construction:
+1. Take 32-byte Ed25519 public key
+2. Base64url-encode it (RFC 4648 §5, no padding) → the `x` value
+3. Construct minimal JWK: `{"crv":"Ed25519","kty":"OKP","x":"<x>"}` (keys sorted alphabetically)
+4. Base64url-encode the JWK JSON string
+5. Prepend `did:jwk:`
+
+The DID is deterministic from the public key — the same key always produces the same DID string.
+
+### manifest.sig Format
+
+```json
+{
+  "algorithm": "ed25519",
+  "did": "did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IjExcVlBWUt4Q3JmVlNfN1R5V1FIT2c3aGN2UGFwaU1scndJYWFQY0hVUm8ifQ",
+  "linkedDids": [],
+  "signature": "<base64-encoded 64-byte Ed25519 signature>",
+  "signer": {
+    "name": "Logos Foundation",
+    "url": "https://logos.co"
+  },
+  "version": 1
+}
+```
+
+- `did` — signer identity as a `did:jwk:` string. The public key is encoded in the DID itself.
+- `signer` — optional, self-asserted metadata (display name, URL). Not covered by the signature. Used for trust prompts.
+- `linkedDids` — reserved for future `did:pkh` entries (blockchain-verified identity). Always `[]` for now. The current type is `string[]` as a placeholder; the final schema will evolve to `{did, proofType, proof}[]` when did:pkh is implemented — each entry will carry a cryptographic proof (e.g., CACAO/EIP-4361) binding the blockchain identity to the signer's `did:jwk`. This is not a breaking change since the field is currently always empty.
+
+### Merkle Tree Hashing
+
+The `hashes` field in `manifest.json` is a map of directory paths to SHA-256 hex digests. Hashes are always present and kept up to date whenever content changes.
+
+- **File hashes**: SHA-256 of each file's content
+- **Leaf directory hashes** (e.g., `variants/darwin-arm64`): Sort files by relative path, concatenate `(path + '\0' + file_hash + '\n')`, SHA-256 the result
+- **Parent directory hashes** (e.g., `variants`): Sort child directory names, concatenate `(dirname + '\0' + child_hash + '\n')`, SHA-256 the result
+- **Root hash**: Same algorithm over all top-level entries
+
+### Signature Invalidation
+
+Any operation that modifies package content:
+- Clears the existing signature (`manifest.sig`)
+- Recomputes content hashes in `manifest.json`
+- `save()` without a valid signature does NOT write `manifest.sig`
+
+### Verification
+
+`lgx verify <pkg.lgx>` performs:
+1. Structural validation (existing checks)
+2. Content hash validation — recomputes Merkle tree and verifies root hash matches (all packages)
+3. If `manifest.sig` is present: verify Ed25519 signature, report signer DID and trust status
+
+### Install-Time Verification (lgpm)
+
+`lgpm install` verifies signatures before extracting packages:
+- **Default (warn)**: Unsigned packages accepted with a warning
+- `--allow-unsigned`: No signature checking
+- `--require-signatures`: Reject unsigned packages and packages from unknown signers
+- `--tofu`: Trust unknown signing keys on first use (adds DID to keyring with signer metadata)
+
+## Future Work
+
+### did:pkh — Blockchain-Verified Identity
+
+The current DID implementation uses `did:jwk` exclusively — a self-contained, offline identity where the public key is embedded in the DID string. No DID Documents are produced or consumed; the DID string is used directly as a structured public key encoding. This is sufficient because `did:jwk` DID Documents are deterministically derivable from the string itself.
+
+When `did:pkh` support is added, signers will be able to prove they control a blockchain account in addition to their Ed25519 signing key. This provides stronger identity guarantees (the signer is tied to a public, auditable on-chain identity).
+
+#### linkedDids schema evolution
+
+The `linkedDids` field in `manifest.sig` is currently `string[]` (always empty). When did:pkh is implemented, each entry will become an object carrying both the DID and a cryptographic proof:
+
+```json
+"linkedDids": [
+  {
+    "did": "did:pkh:eip155:1:0xab16a96D359eC26a11e2C2b3d8f8B8942d5Bfcdb",
+    "proofType": "cacao",
+    "proof": "<CACAO/EIP-4361 signature proving the blockchain account authorized this did:jwk>"
+  }
+]
+```
+
+Without a proof, a `linkedDids` entry is just a claim — anyone could list any blockchain address. The proof cryptographically binds the `did:pkh` to the signer's `did:jwk`.
+
+#### Proof mechanisms
+
+| Mechanism | Description | Offline verification? |
+|-----------|-------------|----------------------|
+| **CACAO (EIP-4361)** | Blockchain account signs a "Sign-In with Ethereum" message authorizing the `did:jwk` | Yes (proof is self-contained) |
+| **Verifiable Credential** | A VC issued by the `did:pkh` subject attesting ownership of the `did:jwk` | Yes (proof is self-contained) |
+| **On-chain registry** | Smart contract mapping blockchain addresses to `did:jwk` strings | No (requires chain query) |
+| **Bidirectional signatures** | Ed25519 key signs `did:pkh` + blockchain key signs `did:jwk` | Yes (both proofs stored) |
+
+CACAO/EIP-4361 is the most practical option: standardized, self-contained, and widely supported.
+
+#### New dependencies
+
+- `secp256k1` library for Ethereum signature verification
+- CACAO/EIP-4361 message format parsing
+- Optional: blockchain RPC client for on-chain registry approaches
+- DID Document resolution for `did:pkh` (extracting verification methods)
 
 ### Publish Command
 

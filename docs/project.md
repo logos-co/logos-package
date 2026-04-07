@@ -24,7 +24,13 @@ logos-package/
 │   │   ├── verify_command.cpp/h
 │   │   ├── merge_command.cpp/h
 │   │   ├── sign_command.cpp/h
+│   │   ├── keygen_command.cpp/h
+│   │   ├── keyring_command.cpp/h
 │   │   └── publish_command.cpp/h
+│   ├── crypto/                 # Cryptographic operations
+│   │   ├── signing.cpp/h       # Ed25519 sign/verify, SHA-256, Merkle tree, DID utilities
+│   │   ├── keyring.cpp/h       # Directory-based trust store (JSON format, DID-based)
+│   │   └── manifest_sig.cpp/h  # manifest.sig JSON format (DID, signer metadata, linkedDids)
 │   └── core/                   # Core library
 │       ├── package.cpp/h       # High-level package operations
 │       ├── manifest.cpp/h      # Manifest JSON handling
@@ -432,15 +438,37 @@ lgx merge linux-amd64.lgx linux-arm64.lgx darwin-arm64.lgx -o mymodule.lgx -y
 lgx merge pkg1.lgx pkg2.lgx --skip-duplicates -y
 ```
 
+### lgx keygen
+
+Generate an Ed25519 signing keypair.
+
+```
+lgx keygen --name <name>
+```
+
+Creates `~/.config/logos/keys/<name>.jwk` (secret key, JWK format, 0600), `<name>.pub` (SSH format), and `<name>.did` (DID string). Prints the `did:jwk:...` DID to stdout.
+
 ### lgx sign
 
-Sign a package (not implemented in v0.1).
+Sign a package with an Ed25519 key and DID identity.
 
 ```
-lgx sign <pkg.lgx>
+lgx sign <pkg.lgx> --key <name> [--name "Display Name"] [--url "https://..."]
 ```
 
-**Status:** Exits with code 1, does not write `manifest.cose`
+Recomputes Merkle tree hashes, writes hashes into `manifest.json`, and creates `manifest.sig` with the signer's DID, Ed25519 signature, and optional signer metadata.
+
+### lgx keyring
+
+Manage trusted keys by DID.
+
+```
+lgx keyring add <name> <did:jwk:...> [--display-name "..."] [--url "..."]
+lgx keyring remove <name>
+lgx keyring list
+```
+
+Keys are stored in `~/.config/logos/trusted-keys/` as `.json` files containing the DID and optional metadata.
 
 ### lgx publish
 
@@ -758,8 +786,7 @@ The workflow configuration is in `.github/workflows/ci.yml`.
 
 ### Future Improvements
 
-1. **Signature support** - Implement COSE signatures via `manifest.cose`
-2. **Registry integration** - Implement `lgx publish` with future package manager & registry
-3. **List command** - Add `lgx list <pkg.lgx>` to show package contents
-4. **Info command** - Add `lgx info <pkg.lgx>` to show manifest details
-5. **Deterministic JSON** - Adopt RFC 8785 (JCS) or define canonical format
+1. **Registry integration** - Implement `lgx publish` with future package manager & registry
+2. **List command** - Add `lgx list <pkg.lgx>` to show package contents
+3. **Info command** - Add `lgx info <pkg.lgx>` to show manifest details
+4. **Load-time verification** - Defense-in-depth signature verification at dlopen time in liblogos

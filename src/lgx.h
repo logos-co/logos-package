@@ -214,6 +214,83 @@ LGX_EXPORT void lgx_set_icon(lgx_package_t pkg, const char* icon);
  */
 LGX_EXPORT const char* lgx_get_manifest_json(lgx_package_t pkg);
 
+/* Signature types and functions */
+
+typedef struct {
+    bool is_signed;          /* manifest.sig present */
+    bool signature_valid;    /* Ed25519 signature verifies */
+    bool hashes_valid;       /* all content hashes match */
+    const char* signer_did;  /* did:jwk:... or NULL */
+    const char* signer_name; /* self-asserted display name, or NULL */
+    const char* signer_url;  /* self-asserted URL, or NULL */
+    const char* trusted_as;  /* keyring name if trusted, or NULL */
+    const char* error;       /* error message, or NULL */
+} lgx_signature_info_t;
+
+/**
+ * Verify the cryptographic signature of a package.
+ *
+ * @param lgx_path Path to the .lgx package file
+ * @param keyring_dir Path to trusted keys directory (NULL for default)
+ * @return Signature info. Free with lgx_free_signature_info().
+ */
+LGX_EXPORT lgx_signature_info_t lgx_verify_signature(
+    const char* lgx_path, const char* keyring_dir);
+
+/**
+ * Free a signature info structure.
+ *
+ * @param info Signature info to free
+ */
+LGX_EXPORT void lgx_free_signature_info(lgx_signature_info_t info);
+
+/**
+ * Sign a package with a secret key.
+ *
+ * @param lgx_path Path to the .lgx package file
+ * @param secret_key_path Path to the secret key file (.jwk)
+ * @param signer_name Optional display name for signer metadata (can be NULL)
+ * @param signer_url Optional URL for signer metadata (can be NULL)
+ * @return Result indicating success or failure
+ */
+LGX_EXPORT lgx_result_t lgx_sign(
+    const char* lgx_path, const char* secret_key_path,
+    const char* signer_name, const char* signer_url);
+
+/**
+ * Generate an Ed25519 signing keypair.
+ *
+ * @param name Name for the keypair
+ * @param output_dir Directory to write key files (NULL for default)
+ * @return Result indicating success or failure
+ */
+LGX_EXPORT lgx_result_t lgx_keygen(
+    const char* name, const char* output_dir);
+
+/**
+ * Add a trusted key to the keyring by DID.
+ *
+ * @param keyring_dir Path to keyring directory (NULL for default)
+ * @param name Local name for the key
+ * @param did DID string (did:jwk:...)
+ * @param display_name Optional display name (can be NULL)
+ * @param url Optional URL (can be NULL)
+ * @return Result indicating success or failure
+ */
+LGX_EXPORT lgx_result_t lgx_keyring_add(
+    const char* keyring_dir, const char* name, const char* did,
+    const char* display_name, const char* url);
+
+/**
+ * Remove a trusted public key from the keyring.
+ *
+ * @param keyring_dir Path to keyring directory (NULL for default)
+ * @param name Name of the key to remove
+ * @return Result indicating success or failure
+ */
+LGX_EXPORT lgx_result_t lgx_keyring_remove(
+    const char* keyring_dir, const char* name);
+
 /* Memory management */
 
 /**

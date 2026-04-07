@@ -8,6 +8,21 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Find required packages
 find_package(ZLIB REQUIRED)
 
+# libsodium - try pkg-config first, then manual search
+find_package(PkgConfig QUIET)
+if(PKG_CONFIG_FOUND)
+    pkg_check_modules(SODIUM QUIET libsodium)
+endif()
+if(NOT SODIUM_FOUND)
+    find_library(SODIUM_LIBRARIES NAMES sodium)
+    find_path(SODIUM_INCLUDE_DIRS NAMES sodium.h)
+    if(SODIUM_LIBRARIES AND SODIUM_INCLUDE_DIRS)
+        set(SODIUM_FOUND TRUE)
+    else()
+        message(FATAL_ERROR "libsodium not found")
+    endif()
+endif()
+
 # ICU configuration - check homebrew paths on macOS
 if(APPLE)
     # Try to find ICU in homebrew keg-only location
@@ -50,6 +65,9 @@ add_library(lgx_core STATIC
     src/core/tar_reader.cpp
     src/core/manifest.cpp
     src/core/package.cpp
+    src/crypto/signing.cpp
+    src/crypto/manifest_sig.cpp
+    src/crypto/keyring.cpp
 )
 
 target_include_directories(lgx_core PUBLIC
@@ -57,11 +75,16 @@ target_include_directories(lgx_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
+target_include_directories(lgx_core PUBLIC
+    ${SODIUM_INCLUDE_DIRS}
+)
+
 target_link_libraries(lgx_core PUBLIC
     ZLIB::ZLIB
     ICU::uc
     ICU::i18n
     nlohmann_json::nlohmann_json
+    ${SODIUM_LIBRARIES}
 )
 
 # Shared library (optional)
@@ -75,18 +98,23 @@ if(LGX_BUILD_SHARED)
         src/core/tar_reader.cpp
         src/core/manifest.cpp
         src/core/package.cpp
+        src/crypto/signing.cpp
+        src/crypto/manifest_sig.cpp
+        src/crypto/keyring.cpp
     )
     
     target_include_directories(lgx_shared PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${SODIUM_INCLUDE_DIRS}
     )
-    
+
     target_link_libraries(lgx_shared PUBLIC
         ZLIB::ZLIB
         ICU::uc
         ICU::i18n
         nlohmann_json::nlohmann_json
+        ${SODIUM_LIBRARIES}
     )
     
     set_target_properties(lgx_shared PROPERTIES
@@ -117,6 +145,8 @@ add_executable(lgx
     src/commands/sign_command.cpp
     src/commands/publish_command.cpp
     src/commands/merge_command.cpp
+    src/commands/keygen_command.cpp
+    src/commands/keyring_command.cpp
 )
 
 target_link_libraries(lgx PRIVATE lgx_core)

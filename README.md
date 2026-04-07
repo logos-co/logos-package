@@ -45,6 +45,46 @@ Validate a package against the LGX specification:
 lgx verify mymodule.lgx
 ```
 
+Always verifies content hashes (Merkle tree) match the actual package contents.
+If the package is signed, also checks the Ed25519 signature and reports whether
+the signer's DID is in the trusted keyring.
+
+### Generate a Signing Key
+
+```bash
+lgx keygen --name my-key
+# Creates ~/.config/logos/keys/my-key.jwk (secret, JWK format)
+#         ~/.config/logos/keys/my-key.pub (SSH format)
+#         ~/.config/logos/keys/my-key.did (DID string)
+# Prints the did:jwk:... DID to stdout
+```
+
+### Sign a Package
+
+```bash
+lgx sign mymodule.lgx --key my-key
+lgx sign mymodule.lgx --key my-key --name "My Organization" --url "https://example.com"
+```
+
+Signing recomputes the Merkle tree of content hashes in `manifest.json`
+and creates `manifest.sig` with the signer's DID (`did:jwk:...`), an Ed25519 signature
+over the manifest bytes, and optional signer metadata.
+
+### Manage Trusted Keys
+
+```bash
+# Add a trusted key by DID
+lgx keyring add publisher-name did:jwk:eyJjcnYi... --display-name "Publisher" --url "https://..."
+
+# List trusted keys
+lgx keyring list
+
+# Remove a trusted key
+lgx keyring remove publisher-name
+```
+
+Trusted keys are stored as `.json` files in `~/.config/logos/trusted-keys/`.
+
 ### Merge Packages
 
 Merge multiple single-variant `.lgx` packages into one multi-variant package:
@@ -76,8 +116,10 @@ tar -tzf mymodule.lgx
 | `lgx remove <pkg> --variant <v> [-y]` | Remove a variant |
 | `lgx extract <pkg> [--variant <v>] [--output <dir>]` | Extract variant contents |
 | `lgx merge <pkg1> <pkg2> ... [-o <output>] [--skip-duplicates] [-y]` | Merge packages into one |
-| `lgx verify <pkg>` | Validate package structure |
-| `lgx sign <pkg>` | Sign package (TODO) |
+| `lgx verify <pkg>` | Validate package structure and signature |
+| `lgx sign <pkg> --key <name> [--name "..."] [--url "..."]` | Sign package with Ed25519 key and DID identity |
+| `lgx keygen --name <name>` | Generate an Ed25519 signing keypair (outputs DID) |
+| `lgx keyring add\|remove\|list` | Manage trusted keys (by DID) |
 | `lgx publish <pkg>` | Publish package (TODO) |
 
 ## Package Structure
@@ -85,6 +127,7 @@ tar -tzf mymodule.lgx
 ```
 mymodule.lgx (tar.gz)
 ├── manifest.json          # Package metadata
+├── manifest.sig           # Optional - Ed25519 signature with DID identity
 ├── variants/
 │   ├── linux-amd64/
 │   │   └── libfoo.so
@@ -108,6 +151,10 @@ lgx add mylib.lgx -v darwin-arm64 -f ./out/macos/libmylib.dylib -y
 
 # Verify
 lgx verify mylib.lgx
+
+# Optional: sign the package
+lgx keygen --name my-key
+lgx sign mylib.lgx --key my-key
 
 # Inspect
 tar -tzf mylib.lgx
