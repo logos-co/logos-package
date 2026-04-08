@@ -24,7 +24,13 @@ logos-package/
 │   │   ├── verify_command.cpp/h
 │   │   ├── merge_command.cpp/h
 │   │   ├── sign_command.cpp/h
+│   │   ├── keygen_command.cpp/h
+│   │   ├── keyring_command.cpp/h
 │   │   └── publish_command.cpp/h
+│   ├── crypto/                 # Cryptographic operations
+│   │   ├── signing.cpp/h       # Ed25519 sign/verify, SHA-256, Merkle tree, DID utilities
+│   │   ├── keyring.cpp/h       # Directory-based trust store (JSON format, DID-based)
+│   │   └── manifest_sig.cpp/h  # manifest.sig JSON format (DID, signer metadata, linkedDids)
 │   └── core/                   # Core library
 │       ├── package.cpp/h       # High-level package operations
 │       ├── manifest.cpp/h      # Manifest JSON handling
@@ -37,6 +43,7 @@ logos-package/
 │   ├── test_cli.cpp            # CLI command tests
 │   ├── test_lib.cpp            # C API library tests
 │   ├── test_package.cpp        # Package operation tests
+│   ├── test_crypto.cpp         # Crypto tests (base64url, DID, ManifestSig, Keyring, signing)
 │   ├── test_manifest.cpp       # Manifest handling tests
 │   ├── test_tar_reader.cpp     # Tar reader tests
 │   ├── test_tar_writer.cpp     # Tar writer tests
@@ -64,6 +71,7 @@ logos-package/
 | **zlib** | Gzip compression/decompression |
 | **ICU** | Unicode NFC normalization |
 | **nlohmann/json** | JSON parsing and serialization |
+| **libsodium** | Ed25519 signing/verification, SHA-256 hashing |
 | **Google Test** | Unit testing framework (optional, for tests) |
 | **Nix** | Package management and reproducible builds |
 
@@ -192,6 +200,9 @@ logos-package/
 | `hasVariant(variant) → bool` | Check if variant exists |
 | `getVariants() → set<string>` | Get all variant names |
 | `getManifest() → Manifest&` | Access manifest |
+| `signPackage(secretKey, name, url) → Result` | Sign package with Ed25519 key |
+| `verifySignature() → SignatureInfo` | Verify signature and package integrity |
+| `validatePackage() → Result` | Validate structure and content hashes |
 
 ## C API Library
 
@@ -244,6 +255,18 @@ The header file `src/lgx.h` is installed to `include/` when using `make install`
 - `lgx_free_package(pkg)` - Free a package handle
 - `lgx_free_string_array(array)` - Free string array returned by library functions
 - `lgx_free_verify_result(result)` - Free verification result structure
+
+**Signing and Verification:**
+- `lgx_sign(lgx_path, secret_key_path, signer_name, signer_url) → lgx_result_t` - Sign a package
+- `lgx_verify_signature(lgx_path, keyring_dir) → lgx_signature_info_t` - Verify package signature
+- `lgx_free_signature_info(info)` - Free signature info structure
+
+**Key Management:**
+- `lgx_keygen(name, output_dir) → lgx_result_t` - Generate Ed25519 signing keypair (output_dir=NULL for default)
+- `lgx_keyring_add(keyring_dir, name, did, display_name, url) → lgx_result_t` - Add trusted key (keyring_dir=NULL for default)
+- `lgx_keyring_remove(keyring_dir, name) → lgx_result_t` - Remove trusted key (keyring_dir=NULL for default)
+- `lgx_keyring_list(keyring_dir) → lgx_keyring_list_t` - List trusted keys (keyring_dir=NULL for default)
+- `lgx_free_keyring_list(list)` - Free keyring list structure
 
 **Error Handling:**
 - `lgx_get_last_error() → const char*` - Get the last error message (thread-local storage)
@@ -384,11 +407,12 @@ lgx extract mymodule.lgx -v web -o ./extracted
 Validate a package against the specification.
 
 ```
-lgx verify <pkg.lgx>
+lgx verify <pkg.lgx> [--keyring-dir <dir>]
 ```
 
 **Arguments:**
 - `pkg.lgx` - Path to package file
+- `--keyring-dir <dir>` - (Optional) Keyring directory for trust lookup (default: `~/.config/logos/trusted-keys/`)
 
 **Exit Codes:**
 - `0` - Package is valid
@@ -398,6 +422,8 @@ lgx verify <pkg.lgx>
 ```bash
 lgx verify mymodule.lgx
 # Package is valid: mymodule.lgx
+
+lgx verify mymodule.lgx --keyring-dir /path/to/keyring
 ```
 
 ### lgx merge
@@ -432,15 +458,70 @@ lgx merge linux-amd64.lgx linux-arm64.lgx darwin-arm64.lgx -o mymodule.lgx -y
 lgx merge pkg1.lgx pkg2.lgx --skip-duplicates -y
 ```
 
+### lgx keygen
+
+Generate an Ed25519 signing keypair.
+
+```
+lgx keygen --name <name> [--output-dir <dir>]
+```
+
+**Arguments:**
+- `--name, -n <name>` - Name for the keypair (required)
+- `--output-dir, -o <dir>` - (Optional) Directory to write key files (default: `~/.config/logos/keys/`)
+
+Creates `<dir>/<name>.jwk` (secret key, JWK format, 0600), `<name>.pub` (SSH format), and `<name>.did` (DID string). Prints the `did:jwk:...` DID to stdout.
+
+**Examples:**
+```bash
+lgx keygen --name my-key
+lgx keygen --name ci-key --output-dir /etc/logos/keys
+```
+
 ### lgx sign
 
-Sign a package (not implemented in v0.1).
+Sign a package with an Ed25519 key and DID identity.
 
 ```
-lgx sign <pkg.lgx>
+lgx sign <pkg.lgx> --key <name> [--keys-dir <dir>] [--name "Display Name"] [--url "https://..."]
 ```
 
-**Status:** Exits with code 1, does not write `manifest.cose`
+**Arguments:**
+- `--key, -k <name>` - Name of the signing key (required)
+- `--keys-dir, -d <dir>` - (Optional) Directory containing key files (default: `~/.config/logos/keys/`)
+- `--name <display-name>` - Signer display name (self-asserted metadata)
+- `--url <url>` - Signer URL (self-asserted metadata)
+
+Validates the package, then creates `manifest.sig` with the signer's DID, Ed25519 signature, and optional signer metadata.
+
+**Examples:**
+```bash
+lgx sign mymodule.lgx --key my-key
+lgx sign mymodule.lgx --key ci-key --keys-dir /etc/logos/keys --name "CI Build" --url "https://ci.example.com"
+```
+
+### lgx keyring
+
+Manage trusted keys by DID.
+
+```
+lgx keyring add <name> <did:jwk:...> [--display-name "..."] [--url "..."] [--dir <dir>]
+lgx keyring remove <name> [--dir <dir>]
+lgx keyring list [--dir <dir>]
+```
+
+**Arguments:**
+- `--dir, -d <dir>` - (Optional) Keyring directory (default: `~/.config/logos/trusted-keys/`)
+
+Keys are stored as `.json` files in the keyring directory containing the DID and optional metadata.
+
+**Examples:**
+```bash
+lgx keyring add publisher did:jwk:eyJj... --display-name "Publisher" --url "https://..."
+lgx keyring list
+lgx keyring list --dir /etc/logos/trusted-keys
+lgx keyring remove publisher
+```
 
 ### lgx publish
 
@@ -487,9 +568,19 @@ lgx publish <pkg.lgx>
 
 4. VERIFY
    lgx verify mymodule.lgx
-   → Validates structure, manifest, completeness
+   → Validates structure, manifest, completeness, content hashes
 
-5. EXTRACT (for consumption)
+5. SIGN (optional)
+   lgx keygen --name my-key
+   lgx sign mymodule.lgx --key my-key --name "My Org" --url "https://example.com"
+   → Creates manifest.sig with DID identity and Ed25519 signature
+
+6. TRUST MANAGEMENT
+   lgx keyring add my-org did:jwk:eyJj... --display-name "My Org"
+   lgx keyring list
+   → Manage trusted signing keys for verification
+
+7. EXTRACT (for consumption)
    lgx extract mymodule.lgx --variant linux-amd64 --output ./extracted
    ┌──────────────────────────────┐
    │ ./extracted/                 │
@@ -497,7 +588,7 @@ lgx publish <pkg.lgx>
    │   └─lib.so                   │
    └──────────────────────────────┘
 
-6. DISTRIBUTE
+8. DISTRIBUTE
    (share mymodule.lgx)
 ```
 
@@ -758,8 +849,7 @@ The workflow configuration is in `.github/workflows/ci.yml`.
 
 ### Future Improvements
 
-1. **Signature support** - Implement COSE signatures via `manifest.cose`
-2. **Registry integration** - Implement `lgx publish` with future package manager & registry
-3. **List command** - Add `lgx list <pkg.lgx>` to show package contents
-4. **Info command** - Add `lgx info <pkg.lgx>` to show manifest details
-5. **Deterministic JSON** - Adopt RFC 8785 (JCS) or define canonical format
+1. **Registry integration** - Implement `lgx publish` with future package manager & registry
+2. **List command** - Add `lgx list <pkg.lgx>` to show package contents
+3. **Info command** - Add `lgx info <pkg.lgx>` to show manifest details
+4. **Load-time verification** - Defense-in-depth signature verification at dlopen time in liblogos

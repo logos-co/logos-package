@@ -11,7 +11,7 @@ thread_local std::string Package::lastError_;
 
 const std::set<std::string> Package::ALLOWED_ROOT_ENTRIES = {
     "manifest.json",
-    "manifest.cose",
+    "manifest.sig",
     "variants",
     "docs",
     "licenses"
@@ -76,7 +76,7 @@ std::optional<Package> Package::load(const std::filesystem::path& lgxPath) {
     Package pkg;
     pkg.entries_ = std::move(readResult.entries);
     
-    // Find and parse manifest
+    // Find and parse manifest and signature
     for (const auto& entry : pkg.entries_) {
         if (entry.path == "manifest.json" && !entry.isDirectory) {
             std::string jsonStr(entry.data.begin(), entry.data.end());
@@ -86,10 +86,19 @@ std::optional<Package> Package::load(const std::filesystem::path& lgxPath) {
                 return std::nullopt;
             }
             pkg.manifest_ = std::move(*manifestOpt);
-            break;
+        }
+        if (entry.path == "manifest.sig" && !entry.isDirectory) {
+            std::string sigStr(entry.data.begin(), entry.data.end());
+            auto sigOpt = crypto::ManifestSig::fromJson(sigStr);
+            if (sigOpt) {
+                pkg.manifestSig_ = std::move(*sigOpt);
+            } else {
+                // manifest.sig is present but could not be parsed
+                pkg.manifestSigParseError_ = true;
+            }
         }
     }
-    
+
     return pkg;
 }
 
@@ -99,14 +108,20 @@ Package::Result Package::save(const std::filesystem::path& lgxPath) const {
     // Add manifest first
     std::string manifestJson = manifest_.toJson();
     writer.addFile("manifest.json", manifestJson);
-    
+
+    // Add manifest.sig if present
+    if (manifestSig_.has_value()) {
+        std::string sigJson = manifestSig_->toJson();
+        writer.addFile("manifest.sig", sigJson);
+    }
+
     // Track which directories we've added
     std::set<std::string> addedDirs;
-    
+
     // Add all other entries
     for (const auto& entry : entries_) {
-        if (entry.path == "manifest.json") {
-            continue;  // Already added
+        if (entry.path == "manifest.json" || entry.path == "manifest.sig") {
+            continue;  // Already added above
         }
         
         // Ensure parent directories exist
@@ -161,119 +176,152 @@ Package::Result Package::save(const std::filesystem::path& lgxPath) const {
     return Result::ok();
 }
 
-Package::VerifyResult Package::verify(const std::filesystem::path& lgxPath) {
+Package::VerifyResult Package::validatePackage() const {
     VerifyResult result = VerifyResult::ok();
-    
-    // Load package
-    auto pkgOpt = load(lgxPath);
-    if (!pkgOpt) {
-        result.valid = false;
-        result.errors.push_back(lastError_);
-        return result;
-    }
-    
-    const Package& pkg = *pkgOpt;
-    
+
     // Validate manifest
-    auto manifestValidation = pkg.manifest_.validate();
+    auto manifestValidation = manifest_.validate();
     if (!manifestValidation.valid) {
         result.valid = false;
         for (const auto& err : manifestValidation.errors) {
             result.errors.push_back("Manifest: " + err);
         }
     }
-    
+
     // Check root layout restrictions
     std::set<std::string> foundRoots;
     std::set<std::string> foundVariants;
     bool hasManifest = false;
     bool hasVariantsDir = false;
-    
-    for (const auto& entry : pkg.entries_) {
+
+    for (const auto& entry : entries_) {
         std::string rootComponent = PathNormalizer::getRootComponent(entry.path);
-        
+
         // Check if root entry is allowed
         if (ALLOWED_ROOT_ENTRIES.find(rootComponent) == ALLOWED_ROOT_ENTRIES.end()) {
             result.valid = false;
             result.errors.push_back("Forbidden root entry: " + rootComponent);
         }
-        
+
         if (entry.path == "manifest.json") {
             hasManifest = true;
         }
-        
+
         if (rootComponent == "variants") {
             hasVariantsDir = true;
-            
+
             // Check variant structure
             auto pathComponents = PathNormalizer::splitPath(entry.path);
             if (pathComponents.size() >= 2) {
                 std::string variantName = PathNormalizer::toLowercase(pathComponents[1]);
                 foundVariants.insert(variantName);
             }
-            
+
             // Check that nothing is directly under variants/ (only directories)
             if (pathComponents.size() == 2 && !entry.isDirectory) {
                 result.valid = false;
                 result.errors.push_back("File directly under variants/: " + entry.path);
             }
         }
-        
+
         // Validate path
         auto pathValidation = PathNormalizer::validateArchivePath(entry.path);
         if (!pathValidation.valid) {
             result.valid = false;
             result.errors.push_back("Invalid path '" + entry.path + "': " + pathValidation.error);
         }
-        
+
         // Check for forbidden file types (handled by tar reader, but double-check)
         // TarReader already filters these, but we verify the entries are regular files or dirs
     }
-    
+
     if (!hasManifest) {
         result.valid = false;
         result.errors.push_back("Missing manifest.json");
     }
-    
+
     if (!hasVariantsDir) {
         result.valid = false;
         result.errors.push_back("Missing variants/ directory");
     }
-    
+
     // Validate completeness (variants <-> main mapping)
-    auto completenessResult = pkg.manifest_.validateCompleteness(foundVariants);
+    auto completenessResult = manifest_.validateCompleteness(foundVariants);
     if (!completenessResult.valid) {
         result.valid = false;
         for (const auto& err : completenessResult.errors) {
             result.errors.push_back(err);
         }
     }
-    
+
     // Verify each main entry points to an existing regular file
-    for (const auto& [variant, mainPath] : pkg.manifest_.main) {
+    for (const auto& [variant, mainPath] : manifest_.main) {
         std::string fullPath = "variants/" + variant + "/" + mainPath;
-        
+
         bool found = false;
-        for (const auto& entry : pkg.entries_) {
+        for (const auto& entry : entries_) {
             // Normalize both paths for comparison
             std::string entryPath = entry.path;
             while (!entryPath.empty() && entryPath.back() == '/') {
                 entryPath.pop_back();
             }
-            
+
             if (entryPath == fullPath && !entry.isDirectory) {
                 found = true;
                 break;
             }
         }
-        
+
         if (!found) {
             result.valid = false;
             result.errors.push_back("main[" + variant + "] points to non-existent file: " + mainPath);
         }
     }
-    
+
+    // Verify content hashes (mandatory when package has content)
+    if (!crypto::init()) {
+        result.valid = false;
+        result.errors.push_back("Failed to initialize crypto library for hash verification");
+        return result;
+    }
+    {
+        auto recomputedHashes = crypto::computeMerkleTree(entries_);
+        bool hasContent = !recomputedHashes.empty();
+
+        if (hasContent && manifest_.hashes.empty()) {
+            result.valid = false;
+            result.errors.push_back("Missing content hashes in manifest");
+        } else if (hasContent) {
+            auto rootIt = manifest_.hashes.find("root");
+            auto recomputedRootIt = recomputedHashes.find("root");
+
+            if (rootIt == manifest_.hashes.end()) {
+                result.valid = false;
+                result.errors.push_back("Missing 'root' hash in manifest");
+            } else if (recomputedRootIt == recomputedHashes.end()) {
+                result.valid = false;
+                result.errors.push_back("Cannot compute root hash (no hashable content)");
+            } else if (rootIt->second != recomputedRootIt->second) {
+                result.valid = false;
+                result.errors.push_back("Content hash mismatch: package content does not match manifest hashes");
+            }
+        }
+    }
+
     return result;
+}
+
+Package::VerifyResult Package::verify(const std::filesystem::path& lgxPath) {
+    // Load package
+    auto pkgOpt = load(lgxPath);
+    if (!pkgOpt) {
+        VerifyResult result;
+        result.valid = false;
+        result.errors.push_back(lastError_);
+        return result;
+    }
+
+    return pkgOpt->validatePackage();
 }
 
 Package::Result Package::addVariant(
@@ -345,20 +393,34 @@ Package::Result Package::addVariant(
     
     // Update manifest main
     manifest_.setMain(variantLc, resolvedMain);
-    
+
+    // Invalidate signature and recompute hashes (content changed)
+    clearSignature();
+    auto hashResult = recomputeHashes();
+    if (!hashResult.success) {
+        return hashResult;
+    }
+
     return Result::ok();
 }
 
 Package::Result Package::removeVariant(const std::string& variant) {
     std::string variantLc = PathNormalizer::toLowercase(variant);
-    
+
     if (!hasVariant(variantLc)) {
         return Result::fail("Variant does not exist: " + variant);
     }
-    
+
     removeVariantEntries(variantLc);
     manifest_.removeMain(variantLc);
-    
+
+    // Invalidate signature and recompute hashes (content changed)
+    clearSignature();
+    auto hashResult = recomputeHashes();
+    if (!hashResult.success) {
+        return hashResult;
+    }
+
     return Result::ok();
 }
 
@@ -625,6 +687,121 @@ Package::Result Package::extractAll(const std::filesystem::path& outputDir) cons
         }
     }
     
+    return Result::ok();
+}
+
+Package::Result Package::signPackage(const crypto::SecretKey& sk,
+                                      const std::string& signerName,
+                                      const std::string& signerUrl) {
+    if (!crypto::init()) {
+        return Result::fail("Failed to initialize crypto library");
+    }
+
+    // 1. Validate package (structure + hashes)
+    auto validation = validatePackage();
+    if (!validation.valid) {
+        std::string err = validation.errors.empty() ? "Package validation failed"
+                          : validation.errors[0];
+        return Result::fail("Cannot sign invalid package: " + err);
+    }
+
+    // 2. Get deterministic manifest JSON bytes
+    std::string manifestJson = manifest_.toJson();
+    std::vector<uint8_t> manifestBytes(manifestJson.begin(), manifestJson.end());
+
+    // 4. Sign with Ed25519
+    auto signature = crypto::sign(manifestBytes, sk);
+
+    // 5. Build ManifestSig with DID
+    auto pk = crypto::extractPublicKey(sk);
+    crypto::ManifestSig sig;
+    sig.version = 1;
+    sig.algorithm = "ed25519";
+    sig.did = crypto::publicKeyToDid(pk);
+    sig.signature = crypto::base64Encode(signature.data(), signature.size());
+    sig.signerName = signerName;
+    sig.signerUrl = signerUrl;
+
+    manifestSig_ = std::move(sig);
+
+    return Result::ok();
+}
+
+Package::SignatureInfo Package::verifySignature() const {
+    SignatureInfo info{};
+    info.is_signed = false;
+    info.signature_valid = false;
+    info.package_valid = false;
+
+    // Validate package structure and content hashes first
+    auto pkgValidation = validatePackage();
+    if (!pkgValidation.valid) {
+        info.package_valid = false;
+        info.error = pkgValidation.errors.empty() ? "Package validation failed"
+                     : pkgValidation.errors[0];
+        return info;
+    }
+    info.package_valid = true;
+
+    if (!manifestSig_.has_value()) {
+        if (manifestSigParseError_) {
+            info.is_signed = true;
+            info.signature_valid = false;
+            info.error = "Failed to parse manifest.sig";
+        }
+        return info;
+    }
+
+    info.is_signed = true;
+    info.signer_did = manifestSig_->did;
+    info.signer_name = manifestSig_->signerName;
+    info.signer_url = manifestSig_->signerUrl;
+
+    if (!crypto::init()) {
+        info.error = "Failed to initialize crypto library";
+        return info;
+    }
+
+    // Extract public key from DID
+    auto pkOpt = crypto::didToPublicKey(manifestSig_->did);
+    if (!pkOpt) {
+        info.error = "Invalid DID in manifest.sig: " + manifestSig_->did;
+        return info;
+    }
+    crypto::PublicKey pk = *pkOpt;
+
+    // Decode signature
+    auto sigBytes = crypto::base64Decode(manifestSig_->signature);
+    if (!sigBytes || sigBytes->size() != crypto::SIGNATURE_SIZE) {
+        info.error = "Invalid signature in manifest.sig";
+        return info;
+    }
+    crypto::Signature sig;
+    std::copy(sigBytes->begin(), sigBytes->end(), sig.begin());
+
+    // Verify Ed25519 signature over manifest.toJson() bytes
+    std::string manifestJson = manifest_.toJson();
+    std::vector<uint8_t> manifestBytes(manifestJson.begin(), manifestJson.end());
+
+    if (!crypto::verify(manifestBytes, pk, sig)) {
+        info.error = "Ed25519 signature verification failed";
+        return info;
+    }
+
+    info.signature_valid = true;
+    return info;
+}
+
+void Package::clearSignature() {
+    manifestSig_ = std::nullopt;
+}
+
+Package::Result Package::recomputeHashes() {
+    if (!crypto::init()) {
+        return Result::fail("Failed to initialize crypto library — cannot compute content hashes");
+    }
+    auto hashes = crypto::computeMerkleTree(entries_);
+    manifest_.hashes = std::move(hashes);
     return Result::ok();
 }
 

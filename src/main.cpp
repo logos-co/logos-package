@@ -7,6 +7,8 @@
 #include "commands/sign_command.h"
 #include "commands/publish_command.h"
 #include "commands/merge_command.h"
+#include "commands/keygen_command.h"
+#include "commands/keyring_command.h"
 
 #include <iostream>
 #include <memory>
@@ -66,6 +68,8 @@ int main(int argc, char* argv[]) {
     commands["sign"] = std::make_unique<lgx::SignCommand>();
     commands["publish"] = std::make_unique<lgx::PublishCommand>();
     commands["merge"] = std::make_unique<lgx::MergeCommand>();
+    commands["keygen"] = std::make_unique<lgx::KeygenCommand>();
+    commands["keyring"] = std::make_unique<lgx::KeyringCommand>();
     
     // Parse arguments
     std::vector<std::string> args;

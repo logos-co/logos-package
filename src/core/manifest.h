@@ -14,7 +14,7 @@ namespace lgx {
 class Manifest {
 public:
     // Current manifest version
-    static constexpr const char* CURRENT_VERSION = "0.1.0";
+    static constexpr const char* CURRENT_VERSION = "0.2.0";
     
     /**
      * Validation result for manifest.
@@ -50,6 +50,11 @@ public:
     
     // Main mapping: variant -> relative path to entry point
     std::map<std::string, std::string> main;
+
+    // Merkle tree hashes (always present, recomputed on every content change)
+    // Keys: "root", "variants", "variants/<name>", "docs", "licenses", etc.
+    // Values: hex-encoded SHA-256
+    std::map<std::string, std::string> hashes;
     
     /**
      * Create a new empty manifest with default version.

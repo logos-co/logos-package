@@ -13,10 +13,11 @@
   ];
   
   # Common runtime dependencies
-  buildInputs = [ 
+  buildInputs = [
     pkgs.zlib
     pkgs.icu
     pkgs.nlohmann_json
+    pkgs.libsodium
     pkgs.gtest
   ];
   
