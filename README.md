@@ -43,6 +43,9 @@ Validate a package against the LGX specification:
 
 ```bash
 lgx verify mymodule.lgx
+
+# Use a custom keyring for trust lookup
+lgx verify mymodule.lgx --keyring-dir /etc/logos/trusted-keys
 ```
 
 Always verifies content hashes (Merkle tree) match the actual package contents.
@@ -57,6 +60,9 @@ lgx keygen --name my-key
 #         ~/.config/logos/keys/my-key.pub (SSH format)
 #         ~/.config/logos/keys/my-key.did (DID string)
 # Prints the did:jwk:... DID to stdout
+
+# Use a custom output directory
+lgx keygen --name ci-key --output-dir /etc/logos/keys
 ```
 
 ### Sign a Package
@@ -64,11 +70,13 @@ lgx keygen --name my-key
 ```bash
 lgx sign mymodule.lgx --key my-key
 lgx sign mymodule.lgx --key my-key --name "My Organization" --url "https://example.com"
+
+# Use keys from a custom directory
+lgx sign mymodule.lgx --key ci-key --keys-dir /etc/logos/keys
 ```
 
-Signing recomputes the Merkle tree of content hashes in `manifest.json`
-and creates `manifest.sig` with the signer's DID (`did:jwk:...`), an Ed25519 signature
-over the manifest bytes, and optional signer metadata.
+Signing validates the package, then creates `manifest.sig` with the signer's DID
+(`did:jwk:...`), an Ed25519 signature over the manifest bytes, and optional signer metadata.
 
 ### Manage Trusted Keys
 
@@ -81,9 +89,13 @@ lgx keyring list
 
 # Remove a trusted key
 lgx keyring remove publisher-name
+
+# Use a custom keyring directory
+lgx keyring list --dir /etc/logos/trusted-keys
+lgx keyring add ci-signer did:jwk:eyJj... --dir /etc/logos/trusted-keys
 ```
 
-Trusted keys are stored as `.json` files in `~/.config/logos/trusted-keys/`.
+Trusted keys are stored as `.json` files in the keyring directory (default: `~/.config/logos/trusted-keys/`).
 
 ### Merge Packages
 
@@ -116,10 +128,10 @@ tar -tzf mymodule.lgx
 | `lgx remove <pkg> --variant <v> [-y]` | Remove a variant |
 | `lgx extract <pkg> [--variant <v>] [--output <dir>]` | Extract variant contents |
 | `lgx merge <pkg1> <pkg2> ... [-o <output>] [--skip-duplicates] [-y]` | Merge packages into one |
-| `lgx verify <pkg>` | Validate package structure and signature |
-| `lgx sign <pkg> --key <name> [--name "..."] [--url "..."]` | Sign package with Ed25519 key and DID identity |
-| `lgx keygen --name <name>` | Generate an Ed25519 signing keypair (outputs DID) |
-| `lgx keyring add\|remove\|list` | Manage trusted keys (by DID) |
+| `lgx verify <pkg> [--keyring-dir <dir>]` | Validate package structure and signature |
+| `lgx sign <pkg> --key <name> [--keys-dir <dir>] [--name "..."] [--url "..."]` | Sign package with Ed25519 key and DID identity |
+| `lgx keygen --name <name> [--output-dir <dir>]` | Generate an Ed25519 signing keypair (outputs DID) |
+| `lgx keyring add\|remove\|list [--dir <dir>]` | Manage trusted keys (by DID) |
 | `lgx publish <pkg>` | Publish package (TODO) |
 
 ## Package Structure
@@ -154,7 +166,7 @@ lgx verify mylib.lgx
 
 # Optional: sign the package
 lgx keygen --name my-key
-lgx sign mylib.lgx --key my-key
+lgx sign mylib.lgx --key my-key --name "My Org" --url "https://example.com"
 
 # Inspect
 tar -tzf mylib.lgx

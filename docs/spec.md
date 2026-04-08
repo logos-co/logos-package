@@ -281,8 +281,11 @@ The merge command compares all manifest fields except `main`, which is expected 
 ### Verification Workflow
 
 ```
-lgx verify <pkg.lgx>
+lgx verify <pkg.lgx> [--keyring-dir <dir>]
 ```
+
+Options:
+- `--keyring-dir <dir>` — Keyring directory for trust lookup (default: `~/.config/logos/trusted-keys/`)
 
 1. Verify package file exists; if not, exit with error
 2. Load and validate package
@@ -337,27 +340,38 @@ Content hashes (Merkle tree) are **always present** in `manifest.json`, regardle
 ### Sign Command
 
 ```
-lgx sign <pkg.lgx> --key <name> [--name "Display Name"] [--url "https://..."]
+lgx sign <pkg.lgx> --key <name> [--keys-dir <dir>] [--name "Display Name"] [--url "https://..."]
 ```
 
 Signs a package by:
-1. Recomputing the Merkle tree of SHA-256 hashes over all archive content (excluding `manifest.json` and `manifest.sig`)
-2. Writing the hash tree into the `hashes` field of `manifest.json`
-3. Creating an Ed25519 detached signature over the exact bytes of `manifest.json`
-4. Writing `manifest.sig` with the signer's DID, signature, and optional metadata
+1. Validating the package (structure and content hashes)
+2. Creating an Ed25519 detached signature over the exact bytes of `manifest.json`
+3. Writing `manifest.sig` with the signer's DID, signature, and optional metadata
 
-The secret key is loaded from `~/.config/logos/keys/<name>.jwk`.
+Options:
+- `--key, -k <name>` — Name of the signing key (required)
+- `--keys-dir, -d <dir>` — Directory containing key files (default: `~/.config/logos/keys/`)
+- `--name <display-name>` — Signer display name (self-asserted metadata)
+- `--url <url>` — Signer URL (self-asserted metadata)
+
+The secret key is loaded from `<keys-dir>/<name>.jwk`.
 
 ### Keygen Command
 
 ```
-lgx keygen --name <name>
+lgx keygen --name <name> [--output-dir <dir>]
 ```
 
-Generates an Ed25519 signing keypair:
-- Secret key: `~/.config/logos/keys/<name>.jwk` (JWK format, permissions 0600)
-- Public key: `~/.config/logos/keys/<name>.pub` (SSH public key format)
-- DID: `~/.config/logos/keys/<name>.did` (plain text `did:jwk:...` string)
+Generates an Ed25519 signing keypair.
+
+Options:
+- `--name, -n <name>` — Name for the keypair (required)
+- `--output-dir, -o <dir>` — Directory to write key files (default: `~/.config/logos/keys/`)
+
+Files created:
+- `<dir>/<name>.jwk` — Secret key (JWK format, permissions 0600)
+- `<dir>/<name>.pub` — Public key (SSH public key format)
+- `<dir>/<name>.did` — DID string (plain text `did:jwk:...`)
 
 Prints the `did:jwk:...` DID to stdout.
 
@@ -377,12 +391,15 @@ Keys are sorted alphabetically for determinism. The `d` field contains the 32-by
 ### Keyring Command
 
 ```
-lgx keyring add <name> <did:jwk:...> [--display-name "..."] [--url "..."]
-lgx keyring remove <name>
-lgx keyring list
+lgx keyring add <name> <did:jwk:...> [--display-name "..."] [--url "..."] [--dir <dir>]
+lgx keyring remove <name> [--dir <dir>]
+lgx keyring list [--dir <dir>]
 ```
 
-Manages trusted keys stored in `~/.config/logos/trusted-keys/` as `.json` files:
+Options:
+- `--dir, -d <dir>` — Keyring directory (default: `~/.config/logos/trusted-keys/`)
+
+Manages trusted keys stored as `.json` files in the keyring directory:
 
 ```json
 {
@@ -456,10 +473,11 @@ Any operation that modifies package content:
 ### Install-Time Verification (lgpm)
 
 `lgpm install` verifies signatures before extracting packages:
-- **Default (warn)**: Unsigned packages accepted with a warning
+- **Default (warn)**: Unsigned packages accepted with a warning; signed packages from unknown signers are accepted with trust info in the response
 - `--allow-unsigned`: No signature checking
-- `--require-signatures`: Reject unsigned packages and packages from unknown signers
-- `--tofu`: Trust unknown signing keys on first use (adds DID to keyring with signer metadata)
+- `--require-signatures`: Reject unsigned packages and packages signed by untrusted keys
+
+Keyring management (adding/removing trusted keys) is handled separately via `lgx keyring` or the package-manager module's `addTrustedKey`/`removeTrustedKey`/`listTrustedKeys` API.
 
 ## Future Work
 
