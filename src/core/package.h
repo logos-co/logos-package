@@ -213,8 +213,9 @@ public:
      * Recompute Merkle tree hashes over all package content.
      * Called automatically when package content is modified.
      * Hashes are always kept up to date in manifest.json.
+     * Returns failure if crypto initialization fails.
      */
-    void recomputeHashes();
+    Result recomputeHashes();
 
     /**
      * Get last error message.

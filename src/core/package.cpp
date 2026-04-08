@@ -396,7 +396,10 @@ Package::Result Package::addVariant(
 
     // Invalidate signature and recompute hashes (content changed)
     clearSignature();
-    recomputeHashes();
+    auto hashResult = recomputeHashes();
+    if (!hashResult.success) {
+        return hashResult;
+    }
 
     return Result::ok();
 }
@@ -407,13 +410,16 @@ Package::Result Package::removeVariant(const std::string& variant) {
     if (!hasVariant(variantLc)) {
         return Result::fail("Variant does not exist: " + variant);
     }
-    
+
     removeVariantEntries(variantLc);
     manifest_.removeMain(variantLc);
 
     // Invalidate signature and recompute hashes (content changed)
     clearSignature();
-    recomputeHashes();
+    auto hashResult = recomputeHashes();
+    if (!hashResult.success) {
+        return hashResult;
+    }
 
     return Result::ok();
 }
@@ -790,12 +796,13 @@ void Package::clearSignature() {
     manifestSig_ = std::nullopt;
 }
 
-void Package::recomputeHashes() {
+Package::Result Package::recomputeHashes() {
     if (!crypto::init()) {
-        return;
+        return Result::fail("Failed to initialize crypto library — cannot compute content hashes");
     }
     auto hashes = crypto::computeMerkleTree(entries_);
     manifest_.hashes = std::move(hashes);
+    return Result::ok();
 }
 
 } // namespace lgx
