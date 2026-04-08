@@ -17,17 +17,18 @@ public:
         return "Generate a signing keypair";
     }
     std::string usage() const override {
-        return "lgx keygen --name <name>\n"
+        return "lgx keygen --name <name> [--output-dir <dir>]\n"
                "\n"
                "Generates an Ed25519 signing keypair.\n"
                "\n"
                "Options:\n"
-               "  --name, -n <name>  Name for the keypair (required)\n"
+               "  --name, -n <name>       Name for the keypair (required)\n"
+               "  --output-dir, -o <dir>  Directory to write key files (default: ~/.config/logos/keys/)\n"
                "\n"
                "Files created:\n"
-               "  ~/.config/logos/keys/<name>.jwk  Secret key in JWK format (permissions 0600)\n"
-               "  ~/.config/logos/keys/<name>.pub  Public key (SSH format)\n"
-               "  ~/.config/logos/keys/<name>.did  DID string (did:jwk:...)\n"
+               "  <dir>/<name>.jwk  Secret key in JWK format (permissions 0600)\n"
+               "  <dir>/<name>.pub  Public key (SSH format)\n"
+               "  <dir>/<name>.did  DID string (did:jwk:...)\n"
                "\n"
                "The DID (did:jwk:...) is printed to stdout.\n";
     }

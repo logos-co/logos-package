@@ -18,17 +18,18 @@ public:
         return "Sign a package with an Ed25519 key";
     }
     std::string usage() const override {
-        return "lgx sign <pkg.lgx> --key <name> [--name \"Display Name\"] [--url \"https://...\"]\n"
+        return "lgx sign <pkg.lgx> --key <name> [--keys-dir <dir>] [--name \"Display Name\"] [--url \"https://...\"]\n"
                "\n"
                "Signs a package by computing content hashes and creating\n"
                "an Ed25519 signature over the manifest.\n"
                "\n"
                "Options:\n"
                "  --key, -k <name>       Name of the signing key (required)\n"
+               "  --keys-dir, -d <dir>   Directory containing key files (default: ~/.config/logos/keys/)\n"
                "  --name <display-name>  Signer display name (self-asserted metadata)\n"
                "  --url <url>            Signer URL (self-asserted metadata)\n"
                "\n"
-               "The secret key is loaded from ~/.config/logos/keys/<name>.jwk.\n"
+               "The secret key is loaded from <keys-dir>/<name>.jwk.\n"
                "Use 'lgx keygen' to generate a keypair first.\n"
                "\n"
                "The signature covers the exact bytes of manifest.json after\n"

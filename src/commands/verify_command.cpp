@@ -87,7 +87,13 @@ int VerifyCommand::execute(const std::vector<std::string>& args) {
     }
 
     // Check keyring
-    auto keyringDir = crypto::Keyring::defaultDirectory();
+    std::string keyringDirOpt = getOption(opts, "keyring-dir", "");
+    std::filesystem::path keyringDir;
+    if (!keyringDirOpt.empty()) {
+        keyringDir = keyringDirOpt;
+    } else {
+        keyringDir = crypto::Keyring::defaultDirectory();
+    }
     if (!keyringDir.empty() && std::filesystem::exists(keyringDir)) {
         crypto::Keyring keyring(keyringDir);
         auto trusted = keyring.findByDid(sigInfo.signer_did);

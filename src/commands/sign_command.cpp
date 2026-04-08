@@ -39,7 +39,13 @@ int SignCommand::execute(const std::vector<std::string>& args) {
     }
 
     // Load secret key
-    auto keysDir = crypto::Keyring::defaultKeysDirectory();
+    std::string keysDirOpt = getOption(opts, "keys-dir", "d");
+    std::filesystem::path keysDir;
+    if (!keysDirOpt.empty()) {
+        keysDir = keysDirOpt;
+    } else {
+        keysDir = crypto::Keyring::defaultKeysDirectory();
+    }
     if (keysDir.empty()) {
         printError("Cannot determine keys directory (HOME not set?)");
         return 1;

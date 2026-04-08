@@ -8,7 +8,7 @@ namespace lgx {
 
 int KeyringCommand::execute(const std::vector<std::string>& args) {
     if (args.empty()) {
-        printError("Missing subcommand. Use: lgx keyring add|remove|list");
+        printError("Missing subcommand. Use: lgx keyring add|remove|list [--dir <dir>]");
         return 1;
     }
 
@@ -17,7 +17,23 @@ int KeyringCommand::execute(const std::vector<std::string>& args) {
         return 1;
     }
 
-    auto keyringDir = crypto::Keyring::defaultDirectory();
+    // Extract --dir/-d from args before subcommand dispatch
+    std::vector<std::string> filteredArgs;
+    std::string customDir;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if ((args[i] == "--dir" || args[i] == "-d") && i + 1 < args.size()) {
+            customDir = args[++i];
+        } else {
+            filteredArgs.push_back(args[i]);
+        }
+    }
+
+    std::filesystem::path keyringDir;
+    if (!customDir.empty()) {
+        keyringDir = customDir;
+    } else {
+        keyringDir = crypto::Keyring::defaultDirectory();
+    }
     if (keyringDir.empty()) {
         printError("Cannot determine keyring directory (HOME not set?)");
         return 1;
@@ -25,19 +41,24 @@ int KeyringCommand::execute(const std::vector<std::string>& args) {
 
     crypto::Keyring keyring(keyringDir);
 
-    std::string subcommand = args[0];
+    if (filteredArgs.empty()) {
+        printError("Missing subcommand. Use: lgx keyring add|remove|list [--dir <dir>]");
+        return 1;
+    }
+
+    std::string subcommand = filteredArgs[0];
 
     if (subcommand == "add") {
-        if (args.size() < 3) {
-            printError("Usage: lgx keyring add <name> <did:jwk:...> [--display-name \"...\"] [--url \"...\"]");
+        if (filteredArgs.size() < 3) {
+            printError("Usage: lgx keyring add <name> <did:jwk:...> [--display-name \"...\"] [--url \"...\"] [--dir <dir>]");
             return 1;
         }
 
-        std::string keyName = args[1];
-        std::string did = args[2];
+        std::string keyName = filteredArgs[1];
+        std::string did = filteredArgs[2];
 
         // Parse optional flags from remaining args
-        std::vector<std::string> remaining(args.begin() + 3, args.end());
+        std::vector<std::string> remaining(filteredArgs.begin() + 3, filteredArgs.end());
         std::vector<std::string> positional;
         auto opts = parseArgs(remaining, positional);
 
@@ -62,12 +83,12 @@ int KeyringCommand::execute(const std::vector<std::string>& args) {
     }
 
     if (subcommand == "remove") {
-        if (args.size() < 2) {
-            printError("Usage: lgx keyring remove <name>");
+        if (filteredArgs.size() < 2) {
+            printError("Usage: lgx keyring remove <name> [--dir <dir>]");
             return 1;
         }
 
-        std::string keyName = args[1];
+        std::string keyName = filteredArgs[1];
         if (!keyring.removeKey(keyName)) {
             printError("Failed to remove key: " + crypto::Keyring::getLastError());
             return 1;

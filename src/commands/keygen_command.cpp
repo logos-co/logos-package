@@ -21,7 +21,13 @@ int KeygenCommand::execute(const std::vector<std::string>& args) {
         return 1;
     }
 
-    auto keysDir = crypto::Keyring::defaultKeysDirectory();
+    std::string outputDir = getOption(opts, "output-dir", "o");
+    std::filesystem::path keysDir;
+    if (!outputDir.empty()) {
+        keysDir = outputDir;
+    } else {
+        keysDir = crypto::Keyring::defaultKeysDirectory();
+    }
     if (keysDir.empty()) {
         printError("Cannot determine keys directory (HOME not set?)");
         return 1;

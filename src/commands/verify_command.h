@@ -18,7 +18,7 @@ public:
         return "Verify a package is valid";
     }
     std::string usage() const override {
-        return "lgx verify <pkg.lgx>\n"
+        return "lgx verify <pkg.lgx> [--keyring-dir <dir>]\n"
                "\n"
                "Validates a package against the LGX specification:\n"
                "  - tar.gz readable\n"
@@ -34,10 +34,14 @@ public:
                "  - Content hashes match (Merkle tree)\n"
                "  - Signer key against trusted keyring\n"
                "\n"
+               "Options:\n"
+               "  --keyring-dir <dir>  Keyring directory for trust lookup (default: ~/.config/logos/trusted-keys/)\n"
+               "\n"
                "Returns 0 on success, non-zero on validation failure.\n"
                "\n"
                "Examples:\n"
-               "  lgx verify mymodule.lgx";
+               "  lgx verify mymodule.lgx\n"
+               "  lgx verify mymodule.lgx --keyring-dir /path/to/keyring";
     }
 };
 

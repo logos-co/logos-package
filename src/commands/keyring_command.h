@@ -25,7 +25,10 @@ public:
                "  remove <name>              Remove a trusted key\n"
                "  list                       List all trusted keys\n"
                "\n"
-               "Keys are stored in ~/.config/logos/trusted-keys/ as .json files.\n";
+               "Options:\n"
+               "  --dir, -d <dir>  Keyring directory (default: ~/.config/logos/trusted-keys/)\n"
+               "\n"
+               "Keys are stored as .json files in the keyring directory.\n";
     }
 };
 
