@@ -92,8 +92,10 @@ std::optional<Package> Package::load(const std::filesystem::path& lgxPath) {
             auto sigOpt = crypto::ManifestSig::fromJson(sigStr);
             if (sigOpt) {
                 pkg.manifestSig_ = std::move(*sigOpt);
+            } else {
+                // manifest.sig is present but could not be parsed
+                pkg.manifestSigParseError_ = true;
             }
-            // If parsing fails, we don't error out — just treat as unsigned
         }
     }
 
@@ -277,7 +279,12 @@ Package::VerifyResult Package::validatePackage() const {
     }
 
     // Verify content hashes (mandatory when package has content)
-    if (crypto::init()) {
+    if (!crypto::init()) {
+        result.valid = false;
+        result.errors.push_back("Failed to initialize crypto library for hash verification");
+        return result;
+    }
+    {
         auto recomputedHashes = crypto::computeMerkleTree(entries_);
         bool hasContent = !recomputedHashes.empty();
 
@@ -731,6 +738,11 @@ Package::SignatureInfo Package::verifySignature() const {
     info.package_valid = true;
 
     if (!manifestSig_.has_value()) {
+        if (manifestSigParseError_) {
+            info.is_signed = true;
+            info.signature_valid = false;
+            info.error = "Failed to parse manifest.sig";
+        }
         return info;
     }
 

@@ -135,6 +135,11 @@ private:
     static thread_local std::string lastError_;
 
     /**
+     * Validate a key name, rejecting path separators and empty names.
+     */
+    static bool validateKeyName(const std::string& name);
+
+    /**
      * Format a public key in SSH format.
      */
     static std::string formatSSHPubKey(const PublicKey& pk, const std::string& name);

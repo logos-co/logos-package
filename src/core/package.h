@@ -225,6 +225,7 @@ private:
     Manifest manifest_;
     std::vector<TarEntry> entries_;
     std::optional<crypto::ManifestSig> manifestSig_;
+    bool manifestSigParseError_ = false;
     
     static thread_local std::string lastError_;
     

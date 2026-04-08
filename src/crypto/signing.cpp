@@ -28,7 +28,7 @@ KeyPair generateKeypair() {
 }
 
 Signature sign(const std::vector<uint8_t>& message, const SecretKey& sk) {
-    init();
+    if (!init()) return {};
     Signature sig;
     unsigned long long sigLen;
     crypto_sign_ed25519_detached(
@@ -39,7 +39,7 @@ Signature sign(const std::vector<uint8_t>& message, const SecretKey& sk) {
 }
 
 bool verify(const std::vector<uint8_t>& message, const PublicKey& pk, const Signature& sig) {
-    init();
+    if (!init()) return false;
     return crypto_sign_ed25519_verify_detached(
         sig.data(),
         message.data(), message.size(),
@@ -64,6 +64,7 @@ std::string sha256Hex(const uint8_t* data, size_t len) {
 }
 
 std::string base64Encode(const uint8_t* data, size_t len) {
+    if (len == 0) return {};
     init();
     size_t b64Len = sodium_base64_encoded_len(len, sodium_base64_VARIANT_ORIGINAL);
     std::string result(b64Len, '\0');
@@ -235,6 +236,7 @@ std::map<std::string, std::string> computeMerkleTree(
 }
 
 std::string base64UrlEncode(const uint8_t* data, size_t len) {
+    if (len == 0) return {};
     init();
     size_t b64Len = sodium_base64_encoded_len(len, sodium_base64_VARIANT_URLSAFE_NO_PADDING);
     std::string result(b64Len, '\0');

@@ -1,5 +1,6 @@
 #include "keyring.h"
 
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -16,6 +17,20 @@ namespace lgx {
 namespace crypto {
 
 thread_local std::string Keyring::lastError_;
+
+bool Keyring::validateKeyName(const std::string& name) {
+    if (name.empty()) {
+        lastError_ = "Key name cannot be empty";
+        return false;
+    }
+    if (name.find('/') != std::string::npos ||
+        name.find('\\') != std::string::npos ||
+        name.find("..") != std::string::npos) {
+        lastError_ = "Key name contains invalid characters (path separators or '..' are not allowed)";
+        return false;
+    }
+    return true;
+}
 
 Keyring::Keyring(const std::filesystem::path& dir) : dir_(dir) {
     ensureDirectory(dir_);
@@ -59,8 +74,7 @@ bool Keyring::addKey(const std::string& name, const std::string& did,
                      const std::string& displayName, const std::string& url) {
     namespace fs = std::filesystem;
 
-    if (name.empty()) {
-        lastError_ = "Key name cannot be empty";
+    if (!validateKeyName(name)) {
         return false;
     }
 
@@ -106,6 +120,10 @@ bool Keyring::addKey(const std::string& name, const std::string& did,
 
 bool Keyring::removeKey(const std::string& name) {
     namespace fs = std::filesystem;
+
+    if (!validateKeyName(name)) {
+        return false;
+    }
 
     auto filePath = dir_ / (name + ".json");
     std::error_code ec;
@@ -222,6 +240,10 @@ bool Keyring::saveKeypair(
 {
     namespace fs = std::filesystem;
 
+    if (!validateKeyName(name)) {
+        return false;
+    }
+
     if (!ensureDirectory(keysDir)) {
         return false;
     }
@@ -306,6 +328,10 @@ std::optional<SecretKey> Keyring::loadSecretKey(
     const std::filesystem::path& keysDir,
     const std::string& name)
 {
+    if (!validateKeyName(name)) {
+        return std::nullopt;
+    }
+
     auto jwkPath = keysDir / (name + ".jwk");
 
     std::ifstream file(jwkPath);
@@ -382,6 +408,10 @@ bool Keyring::ensureDirectory(const std::filesystem::path& dir) {
     std::error_code ec;
 
     if (fs::exists(dir, ec)) {
+        if (!fs::is_directory(dir, ec)) {
+            lastError_ = "Path exists but is not a directory: " + dir.string();
+            return false;
+        }
         return true;
     }
 

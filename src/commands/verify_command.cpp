@@ -80,10 +80,10 @@ int VerifyCommand::execute(const std::vector<std::string>& args) {
     printSuccess("Signature is valid");
     printInfo("Signer DID: " + sigInfo.signer_did);
     if (!sigInfo.signer_name.empty()) {
-        printInfo("Signer name: " + sigInfo.signer_name);
+        printInfo("Signer name (self-asserted): " + sigInfo.signer_name);
     }
     if (!sigInfo.signer_url.empty()) {
-        printInfo("Signer URL: " + sigInfo.signer_url);
+        printInfo("Signer URL (self-asserted): " + sigInfo.signer_url);
     }
 
     // Check keyring

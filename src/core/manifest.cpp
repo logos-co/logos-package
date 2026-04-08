@@ -104,7 +104,7 @@ std::optional<Manifest> Manifest::fromJson(const std::string& jsonStr) {
             m.main[normalizedKey] = value.get<std::string>();
         }
 
-        // Optional hashes field (present in signed packages)
+        // Optional hashes field (used for package integrity verification)
         if (j.contains("hashes") && j["hashes"].is_object()) {
             for (auto& [key, value] : j["hashes"].items()) {
                 if (value.is_string()) {
