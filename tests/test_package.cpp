@@ -195,6 +195,73 @@ TEST_F(PackageTest, AddVariant_Directory_RequiresMain) {
     EXPECT_FALSE(result.success);
 }
 
+TEST_F(PackageTest, AddVariant_UiQmlDirectory_AllowsMissingMain) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->getManifest().type = "ui_qml";
+    pkg->getManifest().view = "qml/Main.qml";
+
+    fs::path testDir = tempDir / "dist";
+    createTestDirectory(testDir, {
+        {"qml/Main.qml", "import QtQuick 2.15\nItem {}"},
+        {"qml/Helper.qml", "import QtQuick 2.15\nItem {}"}
+    });
+
+    auto result = pkg->addVariant("darwin-arm64", testDir);
+    EXPECT_TRUE(result.success);
+
+    pkg->save(pkgPath);
+
+    auto verifyResult = Package::verify(pkgPath);
+    EXPECT_TRUE(verifyResult.valid);
+
+    pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    EXPECT_FALSE(pkg->getManifest().getMain("darwin-arm64").has_value());
+}
+
+TEST_F(PackageTest, AddVariant_UiQmlDirectory_ClearsStaleMain) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->getManifest().type = "ui_qml";
+    pkg->getManifest().view = "qml/Main.qml";
+
+    fs::path firstDir = tempDir / "first";
+    createTestDirectory(firstDir, {
+        {"qml/Main.qml", "import QtQuick 2.15\nItem {}"},
+        {"backend.dylib", "backend"}
+    });
+    auto firstResult = pkg->addVariant("darwin-arm64", firstDir, "backend.dylib");
+    EXPECT_TRUE(firstResult.success);
+    pkg->save(pkgPath);
+
+    pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->getManifest().type = "ui_qml";
+    pkg->getManifest().view = "qml/Main.qml";
+
+    fs::path secondDir = tempDir / "second";
+    createTestDirectory(secondDir, {
+        {"qml/Main.qml", "import QtQuick 2.15\nItem { objectName: \"replacement\" }"}
+    });
+    auto secondResult = pkg->addVariant("darwin-arm64", secondDir);
+    EXPECT_TRUE(secondResult.success);
+    pkg->save(pkgPath);
+
+    auto verifyResult = Package::verify(pkgPath);
+    EXPECT_TRUE(verifyResult.valid);
+
+    pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    EXPECT_FALSE(pkg->getManifest().getMain("darwin-arm64").has_value());
+}
+
 // =============================================================================
 // Variant Replacement Tests (No Merge)
 // =============================================================================
@@ -396,8 +463,9 @@ TEST_F(PackageTest, WouldMainChange) {
     // Main is "lib.so", checking with different value
     EXPECT_TRUE(pkg->wouldMainChange("linux-amd64", "other.so"));
     
-    // Non-existent variant
+    // Non-existent variant: no prior main, so no "change" for prompting purposes
     EXPECT_FALSE(pkg->wouldMainChange("nonexistent", "anything"));
+    EXPECT_FALSE(pkg->wouldMainChange("nonexistent", ""));
 }
 
 // =============================================================================

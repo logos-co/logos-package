@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "core/package.h"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -311,6 +312,90 @@ TEST_F(CLITest, AddCommand_DirectoryWithoutMain) {
     
     EXPECT_NE(exitCode, 0);  // Should fail
     EXPECT_NE(output.find("required"), std::string::npos);
+}
+
+TEST_F(CLITest, AddCommand_UiQmlDirectoryWithoutMain) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    fs::path testDir = tempDir / "dist";
+
+    runLgx("create " + (tempDir / "test").string());
+    fs::create_directories(testDir / "qml");
+    std::ofstream(testDir / "qml" / "Main.qml") << "import QtQuick 2.15\nItem {}";
+
+    auto pkgOpt = lgx::Package::load(pkgPath);
+    ASSERT_TRUE(pkgOpt.has_value());
+    pkgOpt->getManifest().type = "ui_qml";
+    pkgOpt->getManifest().view = "qml/Main.qml";
+    auto saveResult = pkgOpt->save(pkgPath);
+    ASSERT_TRUE(saveResult.success);
+
+    std::string output;
+    int exitCode = runLgx(
+        "add " + pkgPath.string() + " -v darwin-arm64 -f " + testDir.string() + " -y",
+        &output
+    );
+
+    EXPECT_EQ(exitCode, 0);
+    EXPECT_NE(output.find("Added"), std::string::npos);
+
+    exitCode = runLgx("verify " + pkgPath.string());
+    EXPECT_EQ(exitCode, 0);
+}
+
+TEST_F(CLITest, AddCommand_UiQmlDirectoryWithViewFlag) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    fs::path testDir = tempDir / "dist";
+
+    runLgx("create " + (tempDir / "test").string());
+    fs::create_directories(testDir / "qml");
+    std::ofstream(testDir / "qml" / "Main.qml") << "import QtQuick 2.15\nItem {}";
+
+    auto pkgOpt = lgx::Package::load(pkgPath);
+    ASSERT_TRUE(pkgOpt.has_value());
+    pkgOpt->getManifest().type = "ui_qml";
+    auto saveResult = pkgOpt->save(pkgPath);
+    ASSERT_TRUE(saveResult.success);
+
+    std::string output;
+    int exitCode = runLgx(
+        "add " + pkgPath.string() + " -v darwin-arm64 -f " + testDir.string()
+            + " --view qml/Main.qml -y",
+        &output
+    );
+
+    EXPECT_EQ(exitCode, 0);
+    EXPECT_NE(output.find("Added"), std::string::npos);
+
+    exitCode = runLgx("verify " + pkgPath.string());
+    EXPECT_EQ(exitCode, 0);
+
+    auto reloaded = lgx::Package::load(pkgPath);
+    ASSERT_TRUE(reloaded.has_value());
+    EXPECT_EQ(reloaded->getManifest().view, "qml/Main.qml");
+}
+
+TEST_F(CLITest, AddCommand_UiQmlDirectoryWithoutView) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    fs::path testDir = tempDir / "dist";
+
+    runLgx("create " + (tempDir / "test").string());
+    fs::create_directories(testDir);
+    std::ofstream(testDir / "file.txt") << "content";
+
+    auto pkgOpt = lgx::Package::load(pkgPath);
+    ASSERT_TRUE(pkgOpt.has_value());
+    pkgOpt->getManifest().type = "ui_qml";
+    auto saveResult = pkgOpt->save(pkgPath);
+    ASSERT_TRUE(saveResult.success);
+
+    std::string output;
+    int exitCode = runLgx(
+        "add " + pkgPath.string() + " -v darwin-arm64 -f " + testDir.string() + " -y",
+        &output
+    );
+
+    EXPECT_NE(exitCode, 0);
+    EXPECT_NE(output.find("view"), std::string::npos);
 }
 
 // =============================================================================

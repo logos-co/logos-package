@@ -88,7 +88,47 @@ TEST(ManifestTest, FromJson_MissingMain) {
     })";
     
     auto manifest = Manifest::fromJson(json);
+    ASSERT_TRUE(manifest.has_value());
+    EXPECT_TRUE(manifest->main.empty());
+}
+
+TEST(ManifestTest, FromJson_ViewOnlyUiQmlManifest) {
+    const char* json = R"({
+      "manifestVersion": "0.1.0",
+      "name": "test",
+      "version": "1.0.0",
+      "description": "",
+      "author": "",
+      "type": "ui_qml",
+      "category": "",
+      "icon": "",
+      "dependencies": [],
+      "view": "qml/Main.qml"
+    })";
+
+    auto manifest = Manifest::fromJson(json);
+    ASSERT_TRUE(manifest.has_value());
+    EXPECT_TRUE(manifest->main.empty());
+    EXPECT_EQ(manifest->view, "qml/Main.qml");
+}
+
+TEST(ManifestTest, FromJson_InvalidViewType) {
+    const char* json = R"({
+      "manifestVersion": "0.1.0",
+      "name": "test",
+      "version": "1.0.0",
+      "description": "",
+      "author": "",
+      "type": "ui_qml",
+      "category": "",
+      "icon": "",
+      "dependencies": [],
+      "view": {}
+    })";
+
+    auto manifest = Manifest::fromJson(json);
     EXPECT_FALSE(manifest.has_value());
+    EXPECT_FALSE(Manifest::getLastError().empty());
 }
 
 TEST(ManifestTest, FromJson_InvalidJson) {
@@ -152,6 +192,31 @@ TEST(ManifestTest, ToJson_Roundtrip) {
     EXPECT_EQ(parsed->version, original->version);
     EXPECT_EQ(parsed->icon, original->icon);
     EXPECT_EQ(parsed->main, original->main);
+}
+
+TEST(ManifestTest, ToJson_RoundtripPreservesViewWithoutMain) {
+    const char* json = R"({
+      "manifestVersion": "0.1.0",
+      "name": "test",
+      "version": "1.0.0",
+      "description": "",
+      "author": "",
+      "type": "ui_qml",
+      "category": "",
+      "icon": "",
+      "dependencies": [],
+      "view": "qml/Main.qml"
+    })";
+
+    auto original = Manifest::fromJson(json);
+    ASSERT_TRUE(original.has_value());
+
+    std::string serialized = original->toJson();
+    auto parsed = Manifest::fromJson(serialized);
+
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_TRUE(parsed->main.empty());
+    EXPECT_EQ(parsed->view, "qml/Main.qml");
 }
 
 TEST(ManifestTest, ToJson_Deterministic) {
@@ -219,6 +284,32 @@ TEST(ManifestTest, Validate_InvalidMainPath) {
     EXPECT_FALSE(result.valid);
 }
 
+TEST(ManifestTest, Validate_InvalidViewPath) {
+    Manifest m;
+    m.manifestVersion = "0.1.0";
+    m.name = "test";
+    m.version = "1.0.0";
+    m.type = "ui_qml";
+    m.view = "../qml/Main.qml";
+
+    auto result = m.validate();
+    EXPECT_FALSE(result.valid);
+}
+
+TEST(ManifestTest, Validate_UiQmlMissingViewIsInvalid) {
+    Manifest m;
+    m.manifestVersion = "0.1.0";
+    m.name = "test";
+    m.version = "1.0.0";
+    m.type = "ui_qml";
+    // view intentionally left empty
+
+    auto result = m.validate();
+    EXPECT_FALSE(result.valid);
+    ASSERT_FALSE(result.errors.empty());
+    EXPECT_NE(result.errors[0].find("view"), std::string::npos);
+}
+
 // =============================================================================
 // Completeness Constraint Tests
 // =============================================================================
@@ -256,6 +347,20 @@ TEST(ManifestTest, ValidateCompleteness_MissingMainEntry) {
     
     auto result = m.validateCompleteness(variants);
     EXPECT_FALSE(result.valid);
+}
+
+TEST(ManifestTest, ValidateCompleteness_ViewOnlyUiQmlWithoutMainIsValid) {
+    Manifest m;
+    m.manifestVersion = "0.1.0";
+    m.name = "test";
+    m.version = "1.0.0";
+    m.type = "ui_qml";
+    m.view = "qml/Main.qml";
+
+    std::set<std::string> variants = {"linux-amd64", "darwin-arm64"};
+
+    auto result = m.validateCompleteness(variants);
+    EXPECT_TRUE(result.valid);
 }
 
 TEST(ManifestTest, ValidateCompleteness_CaseInsensitive) {
@@ -448,6 +553,43 @@ TEST(ManifestTest, CompareMetadata_DifferentDependencies) {
     EXPECT_FALSE(result.valid);
     ASSERT_FALSE(result.errors.empty());
     EXPECT_NE(result.errors[0].find("dependencies"), std::string::npos);
+}
+
+TEST(ManifestTest, CompareMetadata_DifferentView) {
+    const char* viewJsonA = R"({
+      "manifestVersion": "0.1.0",
+      "name": "test",
+      "version": "1.0.0",
+      "description": "",
+      "author": "",
+      "type": "ui_qml",
+      "category": "",
+      "icon": "",
+      "dependencies": [],
+      "view": "qml/Main.qml"
+    })";
+    const char* viewJsonB = R"({
+      "manifestVersion": "0.1.0",
+      "name": "test",
+      "version": "1.0.0",
+      "description": "",
+      "author": "",
+      "type": "ui_qml",
+      "category": "",
+      "icon": "",
+      "dependencies": [],
+      "view": "qml/Other.qml"
+    })";
+
+    auto a = Manifest::fromJson(viewJsonA);
+    auto b = Manifest::fromJson(viewJsonB);
+    ASSERT_TRUE(a.has_value());
+    ASSERT_TRUE(b.has_value());
+
+    auto result = a->compareMetadata(*b);
+    EXPECT_FALSE(result.valid);
+    ASSERT_FALSE(result.errors.empty());
+    EXPECT_NE(result.errors[0].find("view"), std::string::npos);
 }
 
 TEST(ManifestTest, CompareMetadata_MultipleDifferences) {

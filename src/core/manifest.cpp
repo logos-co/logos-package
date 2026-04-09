@@ -90,18 +90,25 @@ std::optional<Manifest> Manifest::fromJson(const std::string& jsonStr) {
             m.dependencies.push_back(dep.get<std::string>());
         }
         
-        if (!j.contains("main") || !j["main"].is_object()) {
-            lastError_ = "Missing or invalid 'main' field";
-            return std::nullopt;
-        }
-        for (auto& [key, value] : j["main"].items()) {
-            if (!value.is_string()) {
-                lastError_ = "Invalid main entry for '" + key + "' (not a string)";
+        // "main" — structurally optional here so empty packages and QML-only
+        // ui_qml manifests can be parsed. Per-type requirements:
+        //   • non-ui_qml: every variant directory must have a main entry
+        //     (enforced by validateCompleteness).
+        //   • ui_qml: optional; when present, points at the backend Qt plugin lib.
+        if (j.contains("main")) {
+            if (!j["main"].is_object()) {
+                lastError_ = "Invalid 'main' field (must be an object)";
                 return std::nullopt;
             }
-            // Normalize key to lowercase
-            std::string normalizedKey = PathNormalizer::toLowercase(key);
-            m.main[normalizedKey] = value.get<std::string>();
+            for (auto& [key, value] : j["main"].items()) {
+                if (!value.is_string()) {
+                    lastError_ = "Invalid main entry for '" + key + "' (not a string)";
+                    return std::nullopt;
+                }
+                // Normalize key to lowercase
+                std::string normalizedKey = PathNormalizer::toLowercase(key);
+                m.main[normalizedKey] = value.get<std::string>();
+            }
         }
 
         // Optional hashes field (used for package integrity verification)
@@ -111,6 +118,15 @@ std::optional<Manifest> Manifest::fromJson(const std::string& jsonStr) {
                     m.hashes[key] = value.get<std::string>();
                 }
             }
+        }
+
+        // "view" — required for ui_qml (enforced in validate()).
+        if (j.contains("view")) {
+            if (!j["view"].is_string()) {
+                lastError_ = "Invalid 'view' field (must be a string)";
+                return std::nullopt;
+            }
+            m.view = j["view"].get<std::string>();
         }
 
         return m;
@@ -150,6 +166,11 @@ std::string Manifest::toJson() const {
     }
     j["main"] = mainObj;
 
+    // Optional fields: only emit if set
+    if (!view.empty()) {
+        j["view"] = view;
+    }
+
     // Serialize with 2-space indent, sorted keys
     return j.dump(2);
 }
@@ -184,7 +205,21 @@ Manifest::ValidationResult Manifest::validate() const {
             result.addError("Invalid main path for '" + variant + "': " + pathValidation.error);
         }
     }
-    
+
+    if (!view.empty()) {
+        auto pathValidation = PathNormalizer::validateArchivePath(view);
+        if (!pathValidation.valid) {
+            result.addError("Invalid view path: " + pathValidation.error);
+        }
+    }
+
+    // ui_qml requires "view". "main" presence/absence is checked by
+    // validateCompleteness() against the actual variant directories — empty
+    // packages must remain valid here.
+    if (type == "ui_qml" && view.empty()) {
+        result.addError("'view' field is required for ui_qml packages");
+    }
+
     return result;
 }
 
@@ -209,10 +244,16 @@ Manifest::ValidationResult Manifest::validateCompleteness(
         }
     }
     
-    // Every variant directory must have a main entry
-    for (const auto& variant : normalizedExisting) {
-        if (mainVariants.find(variant) == mainVariants.end()) {
-            result.addError("Variant '" + variant + "' has no main entry");
+    // Skip the variant→main check only for clean QML-only ui_qml packages:
+    // type is ui_qml, "view" is set, and "main" was omitted entirely. A
+    // partially-populated "main" still gets the strict check so missing
+    // backend variants are flagged.
+    const bool viewOnlyUiQml = type == "ui_qml" && !view.empty() && mainVariants.empty();
+    if (!viewOnlyUiQml) {
+        for (const auto& variant : normalizedExisting) {
+            if (mainVariants.find(variant) == mainVariants.end()) {
+                result.addError("Variant '" + variant + "' has no main entry");
+            }
         }
     }
     
@@ -290,6 +331,8 @@ Manifest::ValidationResult Manifest::compareMetadata(const Manifest& other) cons
         result.addError("icon: '" + icon + "' vs '" + other.icon + "'");
     if (dependencies != other.dependencies)
         result.addError("dependencies differ");
+    if (type == "ui_qml" && other.type == "ui_qml" && view != other.view)
+        result.addError("view: '" + view + "' vs '" + other.view + "'");
 
     return result;
 }

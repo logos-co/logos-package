@@ -5,7 +5,7 @@
 namespace lgx {
 
 /**
- * Add command: lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [-y/--yes]
+ * Add command: lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [--view <relpath>] [-y/--yes]
  * 
  * Adds files to a variant. If the variant exists, it is completely replaced.
  */
@@ -17,7 +17,7 @@ public:
         return "Add files to a package variant"; 
     }
     std::string usage() const override {
-        return "lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [-y/--yes]\n"
+        return "lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [--view <relpath>] [-y/--yes]\n"
                "\n"
                "Adds files to a variant in the package.\n"
                "If the variant already exists, it is COMPLETELY REPLACED (no merge).\n"
@@ -26,13 +26,19 @@ public:
                "  --variant, -v <name>   Variant name (e.g., linux-amd64)\n"
                "  --files, -f <path>     Path to file or directory to add\n"
                "  --main, -m <relpath>   Path to main file relative to variant root\n"
-               "                         (required if --files is a directory)\n"
+               "                         (required for directory variants except\n"
+               "                          `ui_qml`, where `main` is optional backend\n"
+               "                          metadata)\n"
+               "  --view <relpath>       QML entry point relative to variant root\n"
+               "                         (required for `ui_qml` packages; sets the\n"
+               "                          manifest-level `view` field)\n"
                "  --yes, -y              Skip confirmation prompts\n"
                "\n"
                "Examples:\n"
                "  lgx add mymodule.lgx --variant linux-amd64 --files ./libfoo.so\n"
                "  lgx add mymodule.lgx -v web -f ./dist --main dist/index.js\n"
-               "  lgx add mymodule.lgx -v darwin-arm64 -f ./build -m build/lib.dylib -y";
+               "  lgx add mymodule.lgx -v darwin-arm64 -f ./build --view qml/Main.qml\n"
+               "  lgx add mymodule.lgx -v darwin-arm64 -f ./build -m lib.dylib --view qml/Main.qml -y";
     }
 };
 

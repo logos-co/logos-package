@@ -89,7 +89,9 @@ public:
      * 
      * @param variant Variant name (will be lowercased)
      * @param filesPath Path to file or directory to add
-     * @param mainPath Relative path to main file (required for directories)
+     * @param mainPath Relative path to main file. Optional for `ui_qml`
+     * directory variants, where `view` is the required entry point and `main`
+     * only describes an optional backend plugin.
      * @return Result indicating success or failure
      */
     Result addVariant(
