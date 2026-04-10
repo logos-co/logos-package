@@ -33,6 +33,7 @@ int AddCommand::execute(const std::vector<std::string>& args) {
     }
     
     std::string mainPath = getOption(opts, "main", "m");
+    std::string viewPath = getOption(opts, "view");
     bool autoYes = hasFlag(opts, "yes", "y");
     
     // Check if package exists
@@ -56,6 +57,16 @@ int AddCommand::execute(const std::vector<std::string>& args) {
     
     Package& pkg = *pkgOpt;
     std::string variantLc = PathNormalizer::toLowercase(variant);
+
+    // Apply --view to the manifest if provided
+    if (!viewPath.empty()) {
+        auto viewValidation = PathNormalizer::validateArchivePath(viewPath);
+        if (!viewValidation.valid) {
+            printError("Invalid view path: " + viewValidation.error);
+            return 1;
+        }
+        pkg.getManifest().view = viewPath;
+    }
     
     // Check if variant exists (replacement warning)
     bool variantExists = pkg.hasVariant(variantLc);
@@ -63,9 +74,15 @@ int AddCommand::execute(const std::vector<std::string>& args) {
     // Determine the effective main path
     bool isDir = std::filesystem::is_directory(filesPath);
     std::string effectiveMain;
+    bool uiQmlPackage = pkg.getManifest().type == "ui_qml";
     
+    if (uiQmlPackage && pkg.getManifest().view.empty()) {
+        printError("ui_qml package is missing required 'view' field in manifest (use --view to set it)");
+        return 1;
+    }
+
     if (isDir) {
-        if (mainPath.empty()) {
+        if (mainPath.empty() && !uiQmlPackage) {
             printError("--main is required when --files is a directory");
             return 1;
         }

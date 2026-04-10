@@ -55,6 +55,12 @@ public:
     // Keys: "root", "variants", "variants/<name>", "docs", "licenses", etc.
     // Values: hex-encoded SHA-256
     std::map<std::string, std::string> hashes;
+
+    // Path to the QML entry point, relative to the selected variant root
+    // (e.g. under variants/<variant>/).
+    // Required for type == "ui_qml" (enforced by validate()); empty for
+    // other package types.
+    std::string view;
     
     /**
      * Create a new empty manifest with default version.

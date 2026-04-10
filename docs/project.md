@@ -329,15 +329,19 @@ lgx create mymodule
 Add files to a package variant.
 
 ```
-lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [-y/--yes]
+lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [--view <relpath>] [-y/--yes]
 ```
 
 **Arguments:**
 - `pkg.lgx` - Path to package file
 - `--variant, -v` - Variant name (e.g., `linux-amd64`)
 - `--files, -f` - Path to file or directory to add
-- `--main, -m` - (Optional for files, required for directories) Path to main entry point
+- `--main, -m` - Path to main entry point. Optional for files, required for most directory variants, and optional for `ui_qml` where `view` is the required entry point and `main` is backend-only metadata
+- `--view` - QML entry point relative to variant root. Required for `ui_qml` packages. Sets the manifest-level `view` field
 - `--yes, -y` - Skip confirmation prompts
+
+For `type == "ui_qml"` manifests, `view` (the QML entry point) is required.
+`main`, when present, is the backend Qt plugin library path.
 
 **Behavior:**
 - If variant exists, it is **completely replaced**
@@ -351,6 +355,9 @@ lgx add mymodule.lgx --variant linux-amd64 --files ./libfoo.so
 
 # Add directory with explicit main
 lgx add mymodule.lgx -v web -f ./dist --main index.js
+
+# Add ui_qml variant with view
+lgx add mymodule.lgx -v darwin-arm64 -f ./dist --view qml/Main.qml
 
 # Replace without confirmation
 lgx add mymodule.lgx -v darwin-arm64 -f ./build -m lib.dylib -y

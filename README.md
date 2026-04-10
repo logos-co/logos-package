@@ -19,10 +19,19 @@ Add a single file to a variant:
 lgx add mymodule.lgx --variant linux-amd64 --files ./build/libfoo.so
 ```
 
-Add a directory to a variant (requires `--main`):
+Add a directory to a variant (usually requires `--main`):
 
 ```bash
 lgx add mymodule.lgx --variant web --files ./dist --main index.js
+```
+
+For `type == "ui_qml"` packages, `view` is the required QML entry point and
+`main` is optional backend metadata, so directory variants can be added without
+`--main` when there is no backend plugin. Use `--view` to set the QML entry
+point in the manifest:
+
+```bash
+lgx add mymodule.lgx --variant darwin-arm64 --files ./dist --view qml/Main.qml
 ```
 
 **Note:** If a variant already exists, it is **completely replaced** (no merging). Use `-y` to skip confirmation:
@@ -124,7 +133,7 @@ tar -tzf mymodule.lgx
 | Command | Description |
 |---------|-------------|
 | `lgx create <name>` | Create a new skeleton package |
-| `lgx add <pkg> --variant <v> --files <path> [--main <relpath>] [-y]` | Add files to a variant |
+| `lgx add <pkg> --variant <v> --files <path> [--main <relpath>] [--view <relpath>] [-y]` | Add files to a variant |
 | `lgx remove <pkg> --variant <v> [-y]` | Remove a variant |
 | `lgx extract <pkg> [--variant <v>] [--output <dir>]` | Extract variant contents |
 | `lgx merge <pkg1> <pkg2> ... [-o <output>] [--skip-duplicates] [-y]` | Merge packages into one |

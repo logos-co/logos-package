@@ -90,11 +90,67 @@ The manifest is a UTF-8 encoded JSON file with the following required fields:
 
 All fields are required to ensure consistent metadata for hosts/registries and applications.
 
+### `ui_qml` Contract
+
+For most package types, `main` remains the per-variant entry point and is required.
+
+For `type == "ui_qml"`, the contract is:
+
+- `view` (**required**): relative path to the QML entry point. Interpreted from the installed package root and identical across variants.
+- `main` (**optional**): per-variant backend Qt plugin library. When present, the host runs it in an isolated `ui-host` process and bridges it to the QML view; when absent, the QML view is loaded directly in-process.
+
+`view` must be set for every `ui_qml` package. `main` is set only when the module ships a backend C++ plugin.
+
+Example `ui_qml` manifest with a backend plugin:
+
+```json
+{
+  "manifestVersion": "0.1.0",
+  "name": "package-manager-ui",
+  "version": "1.0.0",
+  "description": "Package manager UI",
+  "author": "Logos",
+  "type": "ui_qml",
+  "category": "ui",
+  "icon": "modules.png",
+  "dependencies": [],
+  "view": "qml/PackageManager.qml",
+  "main": {
+    "linux-amd64": "lib/package_manager_ui_plugin.so",
+    "darwin-arm64": "lib/package_manager_ui_plugin.dylib"
+  }
+}
+```
+
+Example `ui_qml` manifest without a backend (QML-only):
+
+```json
+{
+  "manifestVersion": "0.1.0",
+  "name": "calc-ui",
+  "version": "1.0.0",
+  "description": "Calculator QML UI",
+  "author": "Logos",
+  "type": "ui_qml",
+  "category": "tools",
+  "icon": "",
+  "dependencies": ["calc_module"],
+  "view": "Main.qml",
+  "main": {}
+}
+```
+
 **Main Entry Constraints:**
 - Keys must be lowercase (auto-normalized)
 - Values must be valid relative paths (no absolute paths, no `..` segments)
 - Values must be NFC-normalized
 - Each path must resolve to an existing regular file within the variant directory
+
+**View Entry Constraints:**
+- `view` is required for `type == "ui_qml"`; ignored for other types
+- `view` must be a string
+- `view` must be a valid relative archive path
+- `view` is interpreted relative to the installed package root
 
 ### Variant Structure
 
@@ -103,10 +159,10 @@ All fields are required to ensure consistent metadata for hosts/registries and a
 - The directory structure within a variant is preserved from source
 
 **Completeness Constraint:**
-- Every variant directory must have a corresponding `main` entry
 - Every `main` entry must have a corresponding variant directory
-- No extras on either side (bidirectional completeness)
-- This ensures installers don't have to guess entrypoints: every variant is loadable, and the manifest can't reference missing content
+- For non-`ui_qml` packages: every variant directory must have a corresponding `main` entry
+- For `ui_qml` packages: `main` is optional. When present, the same `main`/variant correspondence applies; when absent, every variant simply ships the QML view referenced by `view`
+- This ensures installers don't have to guess entrypoints
 
 ## Features & Requirements
 
@@ -168,7 +224,7 @@ lgx create <name>
 ### Variant Addition Workflow
 
 ```
-lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [-y]
+lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [--view <relpath>] [-y]
 ```
 
 1. Load existing package
@@ -176,7 +232,7 @@ lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [-y]
 3. Verify files path exists; if not, exit with error
 4. Normalize variant name to lowercase
 5. Determine effective main path:
-   - If `--files` is a directory: `--main` is required
+   - If `--files` is a directory: `--main` is required except for `ui_qml` packages, where `view` is the required entry point and `main` is optional backend metadata
    - If `--files` is a single file: use basename if `--main` not provided
 6. Check if confirmation is needed (unless `-y`):
    - If variant exists and will be replaced
@@ -186,7 +242,7 @@ lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [-y]
 8. Copy files/directory to `variants/<variant>/`
    - Single file: `variants/<variant>/<filename>`
    - Directory: `variants/<variant>/...` (contents placed directly)
-9. Update `main[variant]` entry with effective main path
+9. Update `main[variant]` entry only when an effective main path exists
 10. Validate and save package
 
 **Confirmation Required When:**

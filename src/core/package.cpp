@@ -4,6 +4,7 @@
 
 #include <fstream>
 #include <algorithm>
+#include <unordered_set>
 
 namespace lgx {
 
@@ -254,27 +255,30 @@ Package::VerifyResult Package::validatePackage() const {
         }
     }
 
-    // Verify each main entry points to an existing regular file
+    // Build a set of normalized file paths for O(1) lookups
+    std::unordered_set<std::string> filePaths;
+    for (const auto& entry : entries_) {
+        if (entry.isDirectory) continue;
+        std::string p = entry.path;
+        while (!p.empty() && p.back() == '/') p.pop_back();
+        filePaths.insert(std::move(p));
+    }
+
     for (const auto& [variant, mainPath] : manifest_.main) {
         std::string fullPath = "variants/" + variant + "/" + mainPath;
-
-        bool found = false;
-        for (const auto& entry : entries_) {
-            // Normalize both paths for comparison
-            std::string entryPath = entry.path;
-            while (!entryPath.empty() && entryPath.back() == '/') {
-                entryPath.pop_back();
-            }
-
-            if (entryPath == fullPath && !entry.isDirectory) {
-                found = true;
-                break;
-            }
-        }
-
-        if (!found) {
+        if (filePaths.find(fullPath) == filePaths.end()) {
             result.valid = false;
             result.errors.push_back("main[" + variant + "] points to non-existent file: " + mainPath);
+        }
+    }
+
+    if (manifest_.type == "ui_qml" && !manifest_.view.empty()) {
+        for (const auto& variant : foundVariants) {
+            std::string fullPath = "variants/" + variant + "/" + manifest_.view;
+            if (filePaths.find(fullPath) == filePaths.end()) {
+                result.valid = false;
+                result.errors.push_back("view file missing for variant '" + variant + "': " + manifest_.view);
+            }
         }
     }
 
@@ -345,23 +349,28 @@ Package::Result Package::addVariant(
     }
     
     bool isDir = fs::is_directory(filesPath, ec);
+    const bool uiQmlPackage = manifest_.type == "ui_qml";
     
     // Determine main path
     std::string resolvedMain;
     if (isDir) {
-        if (!mainPath) {
+        if (!mainPath && !uiQmlPackage) {
             return Result::fail("--main is required when --files is a directory");
         }
-        resolvedMain = *mainPath;
+        if (mainPath) {
+            resolvedMain = *mainPath;
+        }
     } else {
         // Single file: main is the basename
         resolvedMain = mainPath.value_or(filesPath.filename().string());
     }
     
-    // Validate main path
-    auto mainValidation = PathNormalizer::validateArchivePath(resolvedMain);
-    if (!mainValidation.valid) {
-        return Result::fail("Invalid main path: " + mainValidation.error);
+    if (!resolvedMain.empty()) {
+        // Validate main path
+        auto mainValidation = PathNormalizer::validateArchivePath(resolvedMain);
+        if (!mainValidation.valid) {
+            return Result::fail("Invalid main path: " + mainValidation.error);
+        }
     }
     
     // Remove existing variant entries
@@ -391,8 +400,13 @@ Package::Result Package::addVariant(
         return addResult;
     }
     
-    // Update manifest main
-    manifest_.setMain(variantLc, resolvedMain);
+    // Update manifest main. ui_qml directory variants may legitimately omit
+    // backend metadata, so clear any stale entry when main is absent.
+    if (!resolvedMain.empty()) {
+        manifest_.setMain(variantLc, resolvedMain);
+    } else {
+        manifest_.removeMain(variantLc);
+    }
 
     // Invalidate signature and recompute hashes (content changed)
     clearSignature();
@@ -459,7 +473,10 @@ std::set<std::string> Package::getVariants() const {
 
 bool Package::wouldMainChange(const std::string& variant, const std::string& newMain) const {
     auto currentMain = manifest_.getMain(variant);
-    return currentMain && *currentMain != newMain;
+    if (!currentMain) {
+        return false;
+    }
+    return *currentMain != newMain;
 }
 
 std::string Package::getLastError() {
