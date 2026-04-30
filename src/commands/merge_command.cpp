@@ -139,6 +139,7 @@ int MergeCommand::execute(const std::vector<std::string>& args) {
     mergedManifest.type = refManifest.type;
     mergedManifest.category = refManifest.category;
     mergedManifest.icon = refManifest.icon;
+    mergedManifest.view = refManifest.view;
     mergedManifest.dependencies = refManifest.dependencies;
 
     // Create a unique temp directory for extracting variants
