@@ -3,11 +3,88 @@
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <cctype>
+#include <regex>
 #include <sstream>
 
 using json = nlohmann::json;
 
 namespace lgx {
+
+namespace {
+
+// Permissive syntactic check for an npm/Cargo-style semver range. The intent
+// is to catch obvious garbage at write time; the downloader does the
+// authoritative matching at resolve time.
+//
+// Accepted constructs (any combination separated by whitespace or `||`):
+//   *, x, X, latest
+//   1, 1.2, 1.2.3, 1.2.3-alpha.1, 1.2.3+build
+//   1.2.x, 1.X
+//   ^1.2, ~1.2.3
+//   =1.2.3, >1, >=1.2, <2, <=2.0.0
+//   1.2.x  (wildcards in any position)
+//   prefixes may be combined into "&&"-like ranges via whitespace.
+bool isValidSemverRange(const std::string& s) {
+    if (s.empty()) return false;
+    // One element (token) regex.
+    // Operators: ^ ~ = > >= < <= (optional)
+    // Body: digits/x/X/* with optional pre/build tags.
+    static const std::regex token(
+        R"(\s*(?:\^|~|>=|<=|=|>|<)?\s*)"
+        R"((?:\*|x|X|latest|)"
+        R"((?:0|[1-9][0-9]*|x|X|\*)(?:\.(?:0|[1-9][0-9]*|x|X|\*))?(?:\.(?:0|[1-9][0-9]*|x|X|\*))?)"
+        R"((?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)"
+        R"())"
+        R"(\s*)"
+    );
+    // Split on `||` (alternation), then on whitespace (conjunction). Every
+    // sub-token must match the token regex.
+    auto trim = [](std::string v) {
+        size_t a = v.find_first_not_of(" \t");
+        size_t b = v.find_last_not_of(" \t");
+        if (a == std::string::npos) return std::string();
+        return v.substr(a, b - a + 1);
+    };
+    auto split = [](const std::string& v, const std::string& sep) {
+        std::vector<std::string> out;
+        size_t pos = 0;
+        while (pos <= v.size()) {
+            size_t next = v.find(sep, pos);
+            if (next == std::string::npos) {
+                out.push_back(v.substr(pos));
+                break;
+            }
+            out.push_back(v.substr(pos, next - pos));
+            pos = next + sep.size();
+        }
+        return out;
+    };
+
+    for (const auto& alt : split(s, "||")) {
+        std::string a = trim(alt);
+        if (a.empty()) return false;
+        // Tokens within an alt are whitespace-separated.
+        std::istringstream iss(a);
+        std::string tok;
+        bool any = false;
+        while (iss >> tok) {
+            if (!std::regex_match(tok, token)) return false;
+            any = true;
+        }
+        if (!any) return false;
+    }
+    return true;
+}
+
+// Cheap shape check for a did:jwk: identity. Full DID parsing happens
+// elsewhere; here we just reject obviously wrong inputs.
+bool isValidDidJwk(const std::string& s) {
+    static const std::regex re(R"(^did:jwk:[A-Za-z0-9_-]+$)");
+    return std::regex_match(s, re);
+}
+
+} // namespace
 
 thread_local std::string Manifest::lastError_;
 
@@ -83,11 +160,36 @@ std::optional<Manifest> Manifest::fromJson(const std::string& jsonStr) {
             return std::nullopt;
         }
         for (const auto& dep : j["dependencies"]) {
-            if (!dep.is_string()) {
-                lastError_ = "Invalid dependency entry (not a string)";
+            if (dep.is_string()) {
+                // Legacy plain-string form: equivalent to { "name": <s> }
+                m.dependencies.push_back(Dependency(dep.get<std::string>()));
+                continue;
+            }
+            if (!dep.is_object()) {
+                lastError_ = "Invalid dependency entry (must be a string or object)";
                 return std::nullopt;
             }
-            m.dependencies.push_back(dep.get<std::string>());
+            Dependency d;
+            if (!dep.contains("name") || !dep["name"].is_string()) {
+                lastError_ = "Dependency object missing required 'name' field";
+                return std::nullopt;
+            }
+            d.name = dep["name"].get<std::string>();
+            if (dep.contains("version")) {
+                if (!dep["version"].is_string()) {
+                    lastError_ = "Dependency '" + d.name + "' has non-string 'version'";
+                    return std::nullopt;
+                }
+                d.version = dep["version"].get<std::string>();
+            }
+            if (dep.contains("signer")) {
+                if (!dep["signer"].is_string()) {
+                    lastError_ = "Dependency '" + d.name + "' has non-string 'signer'";
+                    return std::nullopt;
+                }
+                d.signer = dep["signer"].get<std::string>();
+            }
+            m.dependencies.push_back(std::move(d));
         }
         
         // "main" — structurally optional here so empty packages and QML-only
@@ -148,7 +250,22 @@ std::string Manifest::toJson() const {
     j["type"] = type;
     j["category"] = category;
     j["icon"] = icon;
-    j["dependencies"] = dependencies;
+    // Dependencies: emit each entry in its minimal form. A purely
+    // name-only dependency serialises as a plain string so packages that
+    // never use semver ranges round-trip identically to the 0.2.0 schema.
+    json depsArr = json::array();
+    for (const auto& dep : dependencies) {
+        if (dep.isSimple()) {
+            depsArr.push_back(dep.name);
+        } else {
+            json depObj = json::object();
+            depObj["name"] = dep.name;
+            if (dep.version)  depObj["version"] = *dep.version;
+            if (dep.signer)   depObj["signer"]  = *dep.signer;
+            depsArr.push_back(std::move(depObj));
+        }
+    }
+    j["dependencies"] = std::move(depsArr);
     
     // hashes (only if non-empty, for backward compat with unsigned packages)
     if (!hashes.empty()) {
@@ -218,6 +335,25 @@ Manifest::ValidationResult Manifest::validate() const {
     // packages must remain valid here.
     if (type == "ui_qml" && view.empty()) {
         result.addError("'view' field is required for ui_qml packages");
+    }
+
+    // Validate dependency entries
+    for (const auto& dep : dependencies) {
+        if (dep.name.empty()) {
+            result.addError("Dependency with empty name");
+            continue;
+        }
+        if (dep.name != PathNormalizer::toLowercase(dep.name)) {
+            result.addError("Dependency name '" + dep.name + "' is not lowercase");
+        }
+        if (dep.version.has_value() && !isValidSemverRange(*dep.version)) {
+            result.addError("Dependency '" + dep.name +
+                            "' has invalid semver range: '" + *dep.version + "'");
+        }
+        if (dep.signer.has_value() && !isValidDidJwk(*dep.signer)) {
+            result.addError("Dependency '" + dep.name +
+                            "' has invalid signer DID: '" + *dep.signer + "'");
+        }
     }
 
     return result;
@@ -303,10 +439,13 @@ bool Manifest::isVersionSupported(const std::string& version) {
     if (dotPos == std::string::npos) {
         return false;
     }
-    
+
     std::string major = version.substr(0, dotPos);
-    
-    // Currently only major version 0 is supported
+
+    // Currently only major version 0 is supported. Within 0.x we accept
+    // both 0.2.* (legacy plain-string dependencies) and 0.3.* (richer
+    // dependencies with optional version range + signer DID); see the
+    // Dependency parsing in fromJson() for the compatibility shim.
     return major == "0";
 }
 

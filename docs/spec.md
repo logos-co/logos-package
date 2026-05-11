@@ -53,11 +53,11 @@ package.lgx (tar.gz)
 
 ### Manifest Schema
 
-The manifest is a UTF-8 encoded JSON file with the following required fields:
+The current manifest schema is `0.3.0`. It is a UTF-8 encoded JSON file with the following required fields:
 
 ```json
 {
-  "manifestVersion": "0.1.0",
+  "manifestVersion": "0.3.0",
   "name": "package-name",
   "version": "1.2.3",
   "description": "Package description",
@@ -65,7 +65,11 @@ The manifest is a UTF-8 encoded JSON file with the following required fields:
   "type": "library",
   "category": "crypto",
   "icon": "icon.png",
-  "dependencies": ["dep1", "dep2"],
+  "dependencies": [
+    "simple-dep",
+    {"name": "ranged-dep", "version": "^1.2.0"},
+    {"name": "pinned-dep", "version": ">=0.5.0", "signer": "did:jwk:..."}
+  ],
   "main": {
     "linux-amd64": "path/to/main.so",
     "darwin-arm64": "path/to/main.dylib"
@@ -85,10 +89,26 @@ The manifest is a UTF-8 encoded JSON file with the following required fields:
 | `type` | string | Package type classification | Classification |
 | `category` | string | Package category | Classification |
 | `icon` | string | Relative path to icon file bundled in the package | Display/branding |
-| `dependencies` | array | List of dependency strings | Runtime needs |
+| `dependencies` | array | List of dependency entries — see *Dependency entries* below | Runtime needs |
 | `main` | object | Map of variant name → relative path to entry point (e.g ) `"linux-amd64": "path/to/main.so"` means `linux-amd64/path/to/main.so` | Entry point resolution |
 
 All fields are required to ensure consistent metadata for hosts/registries and applications.
+
+#### Dependency entries
+
+Each element of the `dependencies` array is one of:
+
+- **Plain string** (legacy 0.2.x form, still supported): equivalent to `{"name": <string>}`. Means "any version, any signer".
+- **Object** with:
+  - `name` (string, required) — canonical lowercase package name.
+  - `version` (string, optional) — npm/Cargo-style semver range (`^1.2.0`, `~1.2.3`, `>=1.2 <2.0`, `1.2.x`, `*`, `||` for alternatives, ...). Absent ⇒ any version.
+  - `signer` (string, optional) — `did:jwk:...` DID identifying the trusted publisher. Absent ⇒ any signer. When set, only packages whose `manifest.sig` was produced by that DID match. Used to disambiguate same-named packages from different publishers.
+
+`lgx verify` syntactically validates that `version` parses as a semver range and that `signer` matches the `did:jwk:` shape. Semantic matching (does the constraint resolve to a real candidate?) is the responsibility of the resolver in `logos-package-downloader`.
+
+#### Schema version compatibility
+
+Tooling reads both `manifestVersion: "0.2.x"` and `manifestVersion: "0.3.x"`. Packages produced by `lgx create` use `0.3.0`. A 0.2.0 manifest with plain-string dependencies round-trips unchanged through tooling — strings are emitted as strings, object-form entries are emitted as objects. Bumping the major version (1.x.x) is reserved for future breaking changes.
 
 ### `ui_qml` Contract
 
@@ -105,7 +125,7 @@ Example `ui_qml` manifest with a backend plugin:
 
 ```json
 {
-  "manifestVersion": "0.1.0",
+  "manifestVersion": "0.3.0",
   "name": "package-manager-ui",
   "version": "1.0.0",
   "description": "Package manager UI",
@@ -126,7 +146,7 @@ Example `ui_qml` manifest without a backend (QML-only):
 
 ```json
 {
-  "manifestVersion": "0.1.0",
+  "manifestVersion": "0.3.0",
   "name": "calc-ui",
   "version": "1.0.0",
   "description": "Calculator QML UI",
@@ -333,6 +353,19 @@ The merge command compares all manifest fields except `main`, which is expected 
 **Option Aliases:**
 - `-o` for `--output`
 - `-y` for `--yes`
+
+### Manifest Inspection Workflow
+
+```
+lgx manifest <pkg.lgx> [--json]
+```
+
+Reads `manifest.json` from inside the package and prints it.
+
+- Without `--json`: human-readable summary including name, version, type, category, author, root hash, variants (the keys of `main`), dependencies, and signer DID (when the package is signed).
+- With `--json`: the raw `manifest.json` bytes are written to stdout verbatim — byte-identical to the file embedded in the `.lgx`. This is intended for tooling (e.g. `logos-modules-release-action`) that needs to capture the manifest exactly as it appears in the package.
+
+Exit code: `0` on success, non-zero if the package or its manifest is missing/malformed.
 
 ### Verification Workflow
 
