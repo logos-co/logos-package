@@ -9,6 +9,7 @@
 #include "commands/merge_command.h"
 #include "commands/keygen_command.h"
 #include "commands/keyring_command.h"
+#include "commands/manifest_command.h"
 
 #include <iostream>
 #include <memory>
@@ -70,6 +71,7 @@ int main(int argc, char* argv[]) {
     commands["merge"] = std::make_unique<lgx::MergeCommand>();
     commands["keygen"] = std::make_unique<lgx::KeygenCommand>();
     commands["keyring"] = std::make_unique<lgx::KeyringCommand>();
+    commands["manifest"] = std::make_unique<lgx::ManifestCommand>();
     
     // Parse arguments
     std::vector<std::string> args;

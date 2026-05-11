@@ -61,6 +61,33 @@ Always verifies content hashes (Merkle tree) match the actual package contents.
 If the package is signed, also checks the Ed25519 signature and reports whether
 the signer's DID is in the trusted keyring.
 
+Exit code is `0` on success and non-zero on validation failure, so it's safe to
+use in scripts and CI pipelines (`set -e`, `gh workflow` jobs, etc.).
+
+### Inspect a Package's Manifest
+
+Read the manifest of a package without unpacking it:
+
+```bash
+# Human-readable summary: name, version, type, category, author,
+# root hash, variants (keys of manifest.main), dependencies, and the
+# signer DID when the package is signed.
+lgx manifest mymodule.lgx
+
+# Raw manifest JSON bytes — byte-identical to the manifest.json
+# file inside the .lgx. Intended for tooling (e.g. the release CI
+# pipeline) that needs to capture the exact manifest verbatim.
+lgx manifest mymodule.lgx --json > manifest.json
+```
+
+The `--json` output is the source of truth consumed by
+`logos-modules-release-action` when it extracts the `name` / `version`
+to use for the GitHub release tag — feeding it back into other tools is
+expected.
+
+Exit code is non-zero if the package or its manifest is missing or
+malformed; the error message goes to stderr.
+
 ### Generate a Signing Key
 
 ```bash
@@ -138,6 +165,7 @@ tar -tzf mymodule.lgx
 | `lgx extract <pkg> [--variant <v>] [--output <dir>]` | Extract variant contents |
 | `lgx merge <pkg1> <pkg2> ... [-o <output>] [--skip-duplicates] [-y]` | Merge packages into one |
 | `lgx verify <pkg> [--keyring-dir <dir>]` | Validate package structure and signature |
+| `lgx manifest <pkg> [--json]` | Print the embedded `manifest.json` (human-readable or raw bytes) |
 | `lgx sign <pkg> --key <name> [--keys-dir <dir>] [--name "..."] [--url "..."]` | Sign package with Ed25519 key and DID identity |
 | `lgx keygen --name <name> [--output-dir <dir>]` | Generate an Ed25519 signing keypair (outputs DID) |
 | `lgx keyring add\|remove\|list [--dir <dir>]` | Manage trusted keys (by DID) |
@@ -160,6 +188,66 @@ mymodule.lgx (tar.gz)
 └── licenses/              # Optional
 ```
 
+## Manifest schema
+
+Current `manifestVersion` is **`0.3.0`** (introduced support for richer
+dependency entries — see below). Tooling reads both `0.2.x` and `0.3.x`
+manifests; new packages produced by `lgx create` use `0.3.0`.
+
+```jsonc
+{
+  "manifestVersion": "0.3.0",
+  "name": "mymodule",
+  "version": "1.2.3",
+  "description": "...",
+  "author": "...",
+  "type": "core",                     // "core" | "ui" | "ui_qml" | "library"
+  "category": "...",
+  "icon": "icon.png",
+  "view": "qml/Main.qml",             // required for type == "ui_qml"
+  "main": {                           // variant -> entry path
+    "linux-amd64": "libfoo.so",
+    "darwin-arm64": "libfoo.dylib"
+  },
+  "dependencies": [                   // see "Dependency entries" below
+    "waku_module",
+    {"name": "core_lib", "version": "^1.2.0"},
+    {"name": "secure_store", "version": ">=0.5.0", "signer": "did:jwk:..."}
+  ],
+  "hashes": {                         // Merkle tree, recomputed on save
+    "root": "...",
+    "variants/linux-amd64": "...",
+    "...": "..."
+  }
+}
+```
+
+The full schema (field constraints, completeness rules, `ui_qml`
+contract) lives in [`docs/spec.md`](docs/spec.md).
+
+### Dependency entries
+
+Each `dependencies[]` element is one of:
+
+- **Plain string** (legacy 0.2.x form, still supported):
+  `"waku_module"` is equivalent to `{"name": "waku_module"}` —
+  "any version, any signer".
+- **Object** with:
+  - `name` (string, required) — canonical lowercase package name.
+  - `version` (string, optional) — npm/Cargo-style semver range:
+    `^1.2.0`, `~1.2.3`, `>=1.2 <2.0`, `1.2.x`, `*`, `||` for
+    alternatives. Absent ⇒ any version.
+  - `signer` (string, optional) — `did:jwk:...` identifying the
+    trusted publisher. Absent ⇒ any signer. When set, only packages
+    whose `manifest.sig` was produced by that DID match —
+    useful for disambiguating same-named packages from different
+    publishers.
+
+`lgx verify` syntactically validates that `version` parses as a
+semver range and that `signer` matches the `did:jwk:` shape; the
+semantic resolve (does the constraint actually find a candidate?)
+happens client-side in `logos-package-downloader`.
+
 ## Example Workflow
 
 ```bash
@@ -173,11 +261,14 @@ lgx add mylib.lgx -v darwin-arm64 -f ./out/macos/libmylib.dylib -y
 # Verify
 lgx verify mylib.lgx
 
+# Inspect the manifest (name, version, variants, dependencies, signer)
+lgx manifest mylib.lgx
+
 # Optional: sign the package
 lgx keygen --name my-key
 lgx sign mylib.lgx --key my-key --name "My Org" --url "https://example.com"
 
-# Inspect
+# Inspect the archive contents
 tar -tzf mylib.lgx
 
 # Extract for use

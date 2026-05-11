@@ -5,16 +5,61 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <utility>
 
 namespace lgx {
+
+/**
+ * A package dependency. Lives inside Manifest::dependencies.
+ *
+ * Two on-disk forms are accepted:
+ *   - Plain string: "waku_module"           -> Dependency{ name = "waku_module" }
+ *   - Object:       { "name": "...",
+ *                     "version"?: "^1.2.0",
+ *                     "signer"?: "did:jwk:..." }
+ *
+ * The struct is implicitly constructible from a std::string so existing code
+ * that does `dependencies.push_back("dep")` keeps working unchanged.
+ */
+struct Dependency {
+    std::string name;                       // required, lowercase canonical name
+    std::optional<std::string> version;     // npm/Cargo-style semver range
+    std::optional<std::string> signer;      // did:jwk:... DID, when pinned
+
+    Dependency() = default;
+    Dependency(std::string n) : name(std::move(n)) {}     // NOLINT: intended implicit
+    Dependency(const char* n) : name(n) {}                // NOLINT: intended implicit
+
+    /// True when only the `name` field is set — the value can serialize back
+    /// as a plain string.
+    bool isSimple() const {
+        return !version.has_value() && !signer.has_value();
+    }
+
+    /// Human-readable single-line form, used for `lgx manifest` output and
+    /// error messages.
+    std::string toString() const {
+        std::string s = name;
+        if (version)  s += " " + *version;
+        if (signer)   s += " [signer=" + *signer + "]";
+        return s;
+    }
+
+    bool operator==(const Dependency& o) const {
+        return name == o.name && version == o.version && signer == o.signer;
+    }
+    bool operator!=(const Dependency& o) const { return !(*this == o); }
+};
 
 /**
  * Manifest represents the manifest.json file in an LGX package.
  */
 class Manifest {
 public:
-    // Current manifest version
-    static constexpr const char* CURRENT_VERSION = "0.2.0";
+    // Current manifest version. Bumped to 0.3.0 to accommodate richer
+    // dependency entries (semver ranges + optional signer DID). 0.2.x
+    // manifests are still readable for backward compatibility.
+    static constexpr const char* CURRENT_VERSION = "0.3.0";
     
     /**
      * Validation result for manifest.
@@ -46,7 +91,7 @@ public:
     std::string type;
     std::string category;
     std::string icon;
-    std::vector<std::string> dependencies;
+    std::vector<Dependency> dependencies;
     
     // Main mapping: variant -> relative path to entry point
     std::map<std::string, std::string> main;
