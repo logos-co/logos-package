@@ -98,7 +98,9 @@ under `sidecar.json#signature`):
 # Raw manifest.sig bytes — byte-identical to the file inside the .lgx.
 lgx signature mymodule.lgx > manifest.sig
 
-# Or pipe straight to jq for the signer DID:
+# Or pipe straight to jq for the signer DID (signed packages only —
+# unsigned ones print nothing, and the empty stream makes jq error
+# out with a non-zero exit; gate the pipeline accordingly in scripts).
 lgx signature mymodule.lgx | jq -r .did
 ```
 

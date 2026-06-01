@@ -581,7 +581,80 @@ TEST_F(CLITest, MultiVariantWorkflow) {
     // Verify package with multiple variants
     std::string output;
     int exitCode = runLgx("verify " + pkgPath.string(), &output);
-    
+
     EXPECT_EQ(exitCode, 0);
     EXPECT_NE(output.find("valid"), std::string::npos);
+}
+
+// ── lgx signature ────────────────────────────────────────────────────────
+//
+// Contract pinned by these tests:
+//   * unsigned package  → stdout empty, exit 0
+//   * signed package    → stdout = manifest.sig JSON, exit 0
+//   * missing path      → stderr message, exit non-zero
+// Tooling (the out-of-CI index builder over in logos-modules-release-base)
+// relies on the exit-status-not-stream-length convention to distinguish
+// "no signature" from "error" — regressing that contract would silently
+// flip every unsigned package in a self-hosted catalog into a failure
+// during index build, hence the explicit tests below.
+
+// Test: lgx signature on an unsigned package
+// Expected: empty stdout, exit 0 (the "I'm fine, just unsigned" path).
+TEST_F(CLITest, SignatureCommand_UnsignedPackage) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    fs::path lib = tempDir / "lib.so";
+
+    runLgx("create " + (tempDir / "test").string());
+    std::ofstream(lib) << "payload";
+    runLgx("add " + pkgPath.string() + " -v linux-amd64 -f " +
+           lib.string() + " -y");
+
+    std::string output;
+    int exitCode = runLgx("signature " + pkgPath.string(), &output);
+
+    EXPECT_EQ(exitCode, 0);
+    EXPECT_TRUE(output.empty())
+        << "unsigned package must produce no stdout output; got: " << output;
+}
+
+// Test: lgx signature on a signed package
+// Expected: stdout carries the raw manifest.sig JSON (must contain the
+// signer's DID), exit 0. The content match is intentionally loose —
+// looking for "did" / "signature" substrings is enough to confirm the
+// blob came out, without coupling the test to the exact JSON layout.
+TEST_F(CLITest, SignatureCommand_SignedPackage) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    fs::path lib = tempDir / "lib.so";
+    fs::path keysDir = tempDir / "keys";
+
+    runLgx("create " + (tempDir / "test").string());
+    std::ofstream(lib) << "payload";
+    runLgx("add " + pkgPath.string() + " -v linux-amd64 -f " +
+           lib.string() + " -y");
+    runLgx("keygen --name testkey --output-dir " + keysDir.string());
+    int signExit = runLgx("sign " + pkgPath.string() +
+                          " --key testkey --keys-dir " + keysDir.string());
+    ASSERT_EQ(signExit, 0) << "preflight: signing must succeed for this test";
+
+    std::string output;
+    int exitCode = runLgx("signature " + pkgPath.string(), &output);
+
+    EXPECT_EQ(exitCode, 0);
+    EXPECT_FALSE(output.empty()) << "signed package must produce stdout";
+    EXPECT_NE(output.find("\"did\""), std::string::npos)
+        << "signature JSON should include a `did` field; got: " << output;
+    EXPECT_NE(output.find("\"signature\""), std::string::npos)
+        << "signature JSON should include a `signature` field; got: " << output;
+}
+
+// Test: lgx signature with a missing path
+// Expected: non-zero exit (the "real error, not unsigned" path).
+TEST_F(CLITest, SignatureCommand_MissingPackage) {
+    std::string output;
+    int exitCode = runLgx(
+        "signature " + (tempDir / "does-not-exist.lgx").string(),
+        &output);
+
+    EXPECT_NE(exitCode, 0);
+    EXPECT_FALSE(output.empty()) << "missing package should print a message";
 }
