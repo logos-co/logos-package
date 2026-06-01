@@ -148,6 +148,7 @@ add_executable(lgx
     src/commands/keygen_command.cpp
     src/commands/keyring_command.cpp
     src/commands/manifest_command.cpp
+    src/commands/signature_command.cpp
 )
 
 target_link_libraries(lgx PRIVATE lgx_core)

@@ -88,6 +88,26 @@ expected.
 Exit code is non-zero if the package or its manifest is missing or
 malformed; the error message goes to stderr.
 
+### Inspect a Package's Signature
+
+For tooling that needs the raw `manifest.sig` JSON (e.g. an out-of-CI
+index builder that reproduces what `logos-modules-release-action` records
+under `sidecar.json#signature`):
+
+```bash
+# Raw manifest.sig bytes — byte-identical to the file inside the .lgx.
+lgx signature mymodule.lgx > manifest.sig
+
+# Or pipe straight to jq for the signer DID (signed packages only —
+# unsigned ones print nothing, and the empty stream makes jq error
+# out with a non-zero exit; gate the pipeline accordingly in scripts).
+lgx signature mymodule.lgx | jq -r .did
+```
+
+Unsigned packages produce **no output** and exit 0 — callers tell "no
+signature" apart from "error" by checking the exit status, not the stream
+length. Bad/missing packages exit non-zero with the error on stderr.
+
 ### Generate a Signing Key
 
 ```bash
@@ -166,6 +186,7 @@ tar -tzf mymodule.lgx
 | `lgx merge <pkg1> <pkg2> ... [-o <output>] [--skip-duplicates] [-y]` | Merge packages into one |
 | `lgx verify <pkg> [--keyring-dir <dir>]` | Validate package structure and signature |
 | `lgx manifest <pkg> [--json]` | Print the embedded `manifest.json` (human-readable or raw bytes) |
+| `lgx signature <pkg>` | Print the raw `manifest.sig` bytes (unsigned → empty + exit 0) |
 | `lgx sign <pkg> --key <name> [--keys-dir <dir>] [--name "..."] [--url "..."]` | Sign package with Ed25519 key and DID identity |
 | `lgx keygen --name <name> [--output-dir <dir>]` | Generate an Ed25519 signing keypair (outputs DID) |
 | `lgx keyring add\|remove\|list [--dir <dir>]` | Manage trusted keys (by DID) |

@@ -10,6 +10,7 @@
 #include "commands/keygen_command.h"
 #include "commands/keyring_command.h"
 #include "commands/manifest_command.h"
+#include "commands/signature_command.h"
 
 #include <iostream>
 #include <memory>
@@ -72,6 +73,7 @@ int main(int argc, char* argv[]) {
     commands["keygen"] = std::make_unique<lgx::KeygenCommand>();
     commands["keyring"] = std::make_unique<lgx::KeyringCommand>();
     commands["manifest"] = std::make_unique<lgx::ManifestCommand>();
+    commands["signature"] = std::make_unique<lgx::SignatureCommand>();
     
     // Parse arguments
     std::vector<std::string> args;
