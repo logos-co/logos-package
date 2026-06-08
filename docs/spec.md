@@ -212,6 +212,17 @@ All archive paths must satisfy:
 - No backslash characters (`\`)
 - Unicode NFC-normalized
 
+These rules are enforced both when verifying a package (`lgx verify`) **and at
+extraction time**. Extraction (`lgx extract`, `lgpm install`, and the
+`lgx_extract` C API) re-validates every entry path and additionally checks that
+the resolved destination stays inside the output directory before any file or
+directory is written. A crafted package whose entry escapes the variant root
+(e.g. `variants/<variant>/../../etc/...`) is rejected with an error and **no
+files are written outside the target directory** — even on the unsigned /
+`--allow-unsigned` path, which does not run full package verification. This
+prevents zip-slip / path-traversal arbitrary file writes from an untrusted
+`.lgx`.
+
 **Forbidden File Types:**
 - Symlinks
 - Hardlinks
@@ -309,8 +320,13 @@ lgx extract <pkg.lgx> [--variant <v>] [--output <dir>]
    - Extract variant contents to `<output>/<variant>/`
 4. If `--variant` not specified:
    - Extract all variants to `<output>/<variant>/` for each variant
-5. Create directories as needed
-6. Write files preserving internal directory structure
+5. For each entry, enforce the [Path Safety Rules](#path-safety-rules):
+   reject any entry with an unsafe path (absolute, `..` segment, backslash,
+   non-NFC) and reject any entry whose resolved destination would fall outside
+   `<output>/<variant>/`. On rejection, extraction fails with an error and no
+   file outside the output directory is written.
+6. Create directories as needed
+7. Write files preserving internal directory structure
 
 **Output Structure:**
 - Each variant is extracted to `<output>/<variant-name>/`

@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 #include "core/package.h"
+#include "core/tar_writer.h"
+#include "core/gzip_handler.h"
+#include "core/manifest.h"
 #include "crypto/signing.h"
 #include "crypto/keyring.h"
 
@@ -34,12 +37,40 @@ protected:
     }
     
     // Helper to create a test directory with files
-    void createTestDirectory(const fs::path& dir, 
+    void createTestDirectory(const fs::path& dir,
                             const std::map<std::string, std::string>& files) {
         fs::create_directories(dir);
         for (const auto& [name, content] : files) {
             createTestFile(dir / name, content);
         }
+    }
+
+    // Helper: write a crafted .lgx whose tar contains a single attacker-chosen
+    // entry path verbatim. The normal addVariant() API never produces unsafe
+    // paths (".." segments, absolute paths, etc.), so to exercise the
+    // extraction path-safety checks we have to build the tar by hand. The
+    // package always contains manifest.json and the variants/<variant>/
+    // directory so that load() and hasVariant("linux-x86_64") succeed.
+    void writeCraftedPackage(const fs::path& pkgPath,
+                             const std::string& maliciousEntryPath,
+                             const std::string& payload) {
+        Manifest manifest;
+        manifest.name = "evil";
+        manifest.version = "0.0.1";
+
+        DeterministicTarWriter writer;
+        writer.addFile("manifest.json", manifest.toJson());
+        writer.addDirectory("variants");
+        writer.addDirectory("variants/linux-x86_64");
+        writer.addFile(maliciousEntryPath, payload);
+
+        auto tarData = writer.finalize();
+        auto gzipData = GzipHandler::compress(tarData);
+        ASSERT_FALSE(gzipData.empty());
+
+        std::ofstream out(pkgPath, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(gzipData.data()),
+                  static_cast<std::streamsize>(gzipData.size()));
     }
 };
 
@@ -702,6 +733,188 @@ TEST_F(PackageTest, ExtractAll_EmptyPackage) {
     auto result = pkg->extractAll(extractDir);
     
     EXPECT_TRUE(result.success);
+}
+
+// =============================================================================
+// Extraction Path-Safety Tests (zip-slip / path traversal)
+// =============================================================================
+
+// A crafted package whose tar entry escapes the variant root via ".." segments
+// must NOT write outside the output directory. Reachable from `lgx extract`,
+// `lgpm --allow-unsigned install`, and the lgx_extract C API, none of which run
+// validatePackage() before extracting.
+TEST_F(PackageTest, ExtractVariant_RejectsPathTraversal) {
+    fs::path pkgPath = tempDir / "evil.lgx";
+
+    // Resolves to <tempDir>/pwned.txt — outside the intended output directory.
+    writeCraftedPackage(pkgPath,
+                        "variants/linux-x86_64/../../pwned.txt",
+                        "owned");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value()) << Package::getLastError();
+    ASSERT_TRUE(pkg->hasVariant("linux-x86_64"));
+
+    fs::path extractDir = tempDir / "extracted";
+    fs::path escapeTarget = tempDir / "pwned.txt";
+
+    auto result = pkg->extractVariant("linux-x86_64", extractDir);
+
+    // The traversal entry must be rejected...
+    EXPECT_FALSE(result.success) << "extractVariant accepted a traversal path";
+    // ...and crucially, nothing may be written outside the output directory.
+    EXPECT_FALSE(fs::exists(escapeTarget))
+        << "zip-slip: file written outside output dir at " << escapeTarget.string();
+}
+
+// extractAll() delegates to extractVariant(), so it must inherit the same guard.
+TEST_F(PackageTest, ExtractAll_RejectsPathTraversal) {
+    fs::path pkgPath = tempDir / "evil.lgx";
+
+    writeCraftedPackage(pkgPath,
+                        "variants/linux-x86_64/../../pwned.txt",
+                        "owned");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value()) << Package::getLastError();
+
+    fs::path extractDir = tempDir / "extracted";
+    fs::path escapeTarget = tempDir / "pwned.txt";
+
+    auto result = pkg->extractAll(extractDir);
+
+    EXPECT_FALSE(result.success) << "extractAll accepted a traversal path";
+    EXPECT_FALSE(fs::exists(escapeTarget))
+        << "zip-slip: file written outside output dir at " << escapeTarget.string();
+}
+
+// An absolute entry path must also be rejected (it would otherwise ignore the
+// output directory entirely).
+TEST_F(PackageTest, ExtractVariant_RejectsAbsolutePath) {
+    fs::path pkgPath = tempDir / "evil.lgx";
+    fs::path escapeTarget = tempDir / "abs_pwned.txt";
+
+    // Build an entry whose path, after the "variants/<v>/" prefix, is absolute.
+    writeCraftedPackage(pkgPath,
+                        "variants/linux-x86_64/" + escapeTarget.string(),
+                        "owned");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value()) << Package::getLastError();
+
+    fs::path extractDir = tempDir / "extracted";
+
+    auto result = pkg->extractVariant("linux-x86_64", extractDir);
+
+    EXPECT_FALSE(result.success) << "extractVariant accepted an absolute path";
+    EXPECT_FALSE(fs::exists(escapeTarget))
+        << "absolute-path escape wrote to " << escapeTarget.string();
+}
+
+// Negative control: a legitimate package with a nested subdirectory must still
+// extract correctly — the hardening must not over-reject benign paths.
+TEST_F(PackageTest, ExtractVariant_AllowsBenignNestedPaths) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    fs::path testDir = tempDir / "dist";
+    createTestDirectory(testDir, {
+        {"index.js", "console.log('hello')"},
+        {"sub/dir/lib.js", "export {}"}
+    });
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->addVariant("web", testDir, "index.js");
+    pkg->save(pkgPath);
+
+    pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+
+    fs::path extractDir = tempDir / "extracted";
+    auto result = pkg->extractVariant("web", extractDir);
+
+    EXPECT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(fs::exists(extractDir / "web" / "index.js"));
+    EXPECT_TRUE(fs::exists(extractDir / "web" / "sub" / "dir" / "lib.js"));
+}
+
+// Restores the process working directory on scope exit, so a test that chdir's
+// to exercise relative-output-dir behavior can't leak its CWD into other tests.
+namespace {
+struct CwdGuard {
+    fs::path previous;
+    explicit CwdGuard(const fs::path& to) : previous(fs::current_path()) {
+        fs::current_path(to);
+    }
+    ~CwdGuard() {
+        std::error_code ec;
+        fs::current_path(previous, ec);
+    }
+};
+} // namespace
+
+// Regression for F-003: the containment check must compare two paths that share
+// the same base. When outputDir is RELATIVE (the CLI defaults to "."), canonRoot
+// resolves to an absolute path via weakly_canonical while the target stayed
+// lexical/relative — lexically_relative() then returned empty and every benign
+// entry was false-rejected. A legitimate package extracted into "." must succeed.
+TEST_F(PackageTest, ExtractVariant_AllowsBenignPaths_RelativeOutputDir) {
+    fs::path pkgPath = tempDir / "test.lgx";  // absolute — unaffected by chdir
+    Package::create(pkgPath, "testpkg");
+
+    fs::path testDir = tempDir / "dist";
+    createTestDirectory(testDir, {
+        {"index.js", "console.log('hello')"},
+        {"sub/dir/lib.js", "export {}"}
+    });
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->addVariant("web", testDir, "index.js");
+    pkg->save(pkgPath);
+
+    pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+
+    // Extract into "." from a fresh working directory.
+    fs::path workDir = tempDir / "workdir";
+    fs::create_directories(workDir);
+    CwdGuard guard(workDir);
+
+    auto result = pkg->extractVariant("web", ".");
+
+    EXPECT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(fs::exists(workDir / "web" / "index.js"));
+    EXPECT_TRUE(fs::exists(workDir / "web" / "sub" / "dir" / "lib.js"));
+}
+
+// Regression for F-003: a traversal entry must still be rejected when the output
+// directory is relative — the fix for the false-rejection above must not weaken
+// the zip-slip guard on the relative path.
+TEST_F(PackageTest, ExtractVariant_RejectsPathTraversal_RelativeOutputDir) {
+    fs::path pkgPath = tempDir / "evil.lgx";
+
+    // After the "variants/linux-x86_64/" prefix this is "../../pwned.txt", which
+    // from <workdir>/. resolves to <tempDir>/pwned.txt — outside the output dir.
+    writeCraftedPackage(pkgPath,
+                        "variants/linux-x86_64/../../pwned.txt",
+                        "owned");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value()) << Package::getLastError();
+    ASSERT_TRUE(pkg->hasVariant("linux-x86_64"));
+
+    fs::path workDir = tempDir / "workdir";
+    fs::create_directories(workDir);
+    fs::path escapeTarget = tempDir / "pwned.txt";
+    CwdGuard guard(workDir);
+
+    auto result = pkg->extractVariant("linux-x86_64", ".");
+
+    EXPECT_FALSE(result.success) << "extractVariant accepted a traversal path";
+    EXPECT_FALSE(fs::exists(escapeTarget))
+        << "zip-slip: file written outside output dir at " << escapeTarget.string();
 }
 
 TEST_F(PackageTest, ExtractVariant_CaseInsensitive) {

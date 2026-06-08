@@ -195,8 +195,8 @@ logos-package/
 | `verify(path) → VerifyResult` | Validate package against spec |
 | `addVariant(variant, filesPath, mainPath) → Result` | Add/replace variant |
 | `removeVariant(variant) → Result` | Remove variant |
-| `extractVariant(variant, outputDir) → Result` | Extract variant to directory |
-| `extractAll(outputDir) → Result` | Extract all variants to directory |
+| `extractVariant(variant, outputDir) → Result` | Extract variant to directory (rejects unsafe/traversal entry paths; never writes outside `outputDir`) |
+| `extractAll(outputDir) → Result` | Extract all variants to directory (same path-safety enforcement as `extractVariant`) |
 | `hasVariant(variant) → bool` | Check if variant exists |
 | `getVariants() → set<string>` | Get all variant names |
 | `getManifest() → Manifest&` | Access manifest |

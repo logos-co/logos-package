@@ -644,21 +644,59 @@ Package::Result Package::extractVariant(
     }
     
     fs::path variantOutputDir = outputDir / variantLc;
-    
+
+    // Resolve the containment root once. weakly_canonical works even if the
+    // directory does not exist yet; fall back to lexical normalization if the
+    // filesystem cannot resolve it.
+    fs::path canonRoot = fs::weakly_canonical(variantOutputDir, ec);
+    if (ec || canonRoot.empty()) {
+        canonRoot = variantOutputDir.lexically_normal();
+        ec.clear();
+    }
+
     std::string prefix = "variants/" + variantLc + "/";
-    
+
     for (const auto& entry : entries_) {
         if (entry.path.substr(0, prefix.length()) != prefix) {
             continue;
         }
-        
+
+        // Zip-slip defense. Package::load() stores tar entry paths verbatim and
+        // never runs validateArchivePath() on the load->extract path, so a
+        // crafted .lgx can carry a "variants/<v>/../../.." entry that satisfies
+        // the prefix test above. Reject any entry the archive validator would
+        // reject (absolute paths, ".." segments, backslashes, non-NFC) before
+        // touching the filesystem.
+        auto pathValidation = PathNormalizer::validateArchivePath(entry.path);
+        if (!pathValidation.valid) {
+            return Result::fail("Refusing to extract unsafe archive path '" +
+                                entry.path + "': " + pathValidation.error);
+        }
+
         std::string relativePath = entry.path.substr(prefix.length());
         if (relativePath.empty()) {
             continue;
         }
-        
+
         fs::path fullPath = variantOutputDir / relativePath;
-        
+
+        // Defense in depth: the normalized target must stay under canonRoot.
+        // Guards against escapes that the per-entry check might miss (e.g. via
+        // already-resolved separators) without depending on the file existing.
+        //
+        // canonFull is built by joining relativePath onto canonRoot (not from
+        // fullPath directly) so both sides of the comparison always share the
+        // same base. canonRoot is absolute when weakly_canonical succeeds but
+        // fullPath stays relative when outputDir is relative (e.g. the CLI's
+        // default "."); comparing an absolute base against a relative target
+        // makes lexically_relative() return empty and false-rejects every
+        // benign entry. Anchoring to canonRoot keeps them consistent.
+        fs::path canonFull = (canonRoot / relativePath).lexically_normal();
+        fs::path rel = canonFull.lexically_relative(canonRoot);
+        if (rel.empty() || *rel.begin() == "..") {
+            return Result::fail("Path escapes output directory: " + fullPath.string());
+        }
+
         if (entry.isDirectory) {
             if (!fs::create_directories(fullPath, ec) && ec) {
                 return Result::fail("Failed to create directory: " + fullPath.string() + " - " + ec.message());
