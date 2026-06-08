@@ -839,6 +839,84 @@ TEST_F(PackageTest, ExtractVariant_AllowsBenignNestedPaths) {
     EXPECT_TRUE(fs::exists(extractDir / "web" / "sub" / "dir" / "lib.js"));
 }
 
+// Restores the process working directory on scope exit, so a test that chdir's
+// to exercise relative-output-dir behavior can't leak its CWD into other tests.
+namespace {
+struct CwdGuard {
+    fs::path previous;
+    explicit CwdGuard(const fs::path& to) : previous(fs::current_path()) {
+        fs::current_path(to);
+    }
+    ~CwdGuard() {
+        std::error_code ec;
+        fs::current_path(previous, ec);
+    }
+};
+} // namespace
+
+// Regression for F-003: the containment check must compare two paths that share
+// the same base. When outputDir is RELATIVE (the CLI defaults to "."), canonRoot
+// resolves to an absolute path via weakly_canonical while the target stayed
+// lexical/relative — lexically_relative() then returned empty and every benign
+// entry was false-rejected. A legitimate package extracted into "." must succeed.
+TEST_F(PackageTest, ExtractVariant_AllowsBenignPaths_RelativeOutputDir) {
+    fs::path pkgPath = tempDir / "test.lgx";  // absolute — unaffected by chdir
+    Package::create(pkgPath, "testpkg");
+
+    fs::path testDir = tempDir / "dist";
+    createTestDirectory(testDir, {
+        {"index.js", "console.log('hello')"},
+        {"sub/dir/lib.js", "export {}"}
+    });
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->addVariant("web", testDir, "index.js");
+    pkg->save(pkgPath);
+
+    pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+
+    // Extract into "." from a fresh working directory.
+    fs::path workDir = tempDir / "workdir";
+    fs::create_directories(workDir);
+    CwdGuard guard(workDir);
+
+    auto result = pkg->extractVariant("web", ".");
+
+    EXPECT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(fs::exists(workDir / "web" / "index.js"));
+    EXPECT_TRUE(fs::exists(workDir / "web" / "sub" / "dir" / "lib.js"));
+}
+
+// Regression for F-003: a traversal entry must still be rejected when the output
+// directory is relative — the fix for the false-rejection above must not weaken
+// the zip-slip guard on the relative path.
+TEST_F(PackageTest, ExtractVariant_RejectsPathTraversal_RelativeOutputDir) {
+    fs::path pkgPath = tempDir / "evil.lgx";
+
+    // After the "variants/linux-x86_64/" prefix this is "../../pwned.txt", which
+    // from <workdir>/. resolves to <tempDir>/pwned.txt — outside the output dir.
+    writeCraftedPackage(pkgPath,
+                        "variants/linux-x86_64/../../pwned.txt",
+                        "owned");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value()) << Package::getLastError();
+    ASSERT_TRUE(pkg->hasVariant("linux-x86_64"));
+
+    fs::path workDir = tempDir / "workdir";
+    fs::create_directories(workDir);
+    fs::path escapeTarget = tempDir / "pwned.txt";
+    CwdGuard guard(workDir);
+
+    auto result = pkg->extractVariant("linux-x86_64", ".");
+
+    EXPECT_FALSE(result.success) << "extractVariant accepted a traversal path";
+    EXPECT_FALSE(fs::exists(escapeTarget))
+        << "zip-slip: file written outside output dir at " << escapeTarget.string();
+}
+
 TEST_F(PackageTest, ExtractVariant_CaseInsensitive) {
     fs::path pkgPath = tempDir / "test.lgx";
     Package::create(pkgPath, "testpkg");

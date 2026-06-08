@@ -683,7 +683,15 @@ Package::Result Package::extractVariant(
         // Defense in depth: the normalized target must stay under canonRoot.
         // Guards against escapes that the per-entry check might miss (e.g. via
         // already-resolved separators) without depending on the file existing.
-        fs::path canonFull = fullPath.lexically_normal();
+        //
+        // canonFull is built by joining relativePath onto canonRoot (not from
+        // fullPath directly) so both sides of the comparison always share the
+        // same base. canonRoot is absolute when weakly_canonical succeeds but
+        // fullPath stays relative when outputDir is relative (e.g. the CLI's
+        // default "."); comparing an absolute base against a relative target
+        // makes lexically_relative() return empty and false-rejects every
+        // benign entry. Anchoring to canonRoot keeps them consistent.
+        fs::path canonFull = (canonRoot / relativePath).lexically_normal();
         fs::path rel = canonFull.lexically_relative(canonRoot);
         if (rel.empty() || *rel.begin() == "..") {
             return Result::fail("Path escapes output directory: " + fullPath.string());
