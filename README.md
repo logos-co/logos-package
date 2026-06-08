@@ -296,7 +296,6 @@ tar -tzf mylib.lgx
 lgx extract mylib.lgx --variant linux-amd64 --output ./extracted
 ```
 
-
 ## Building
 
 ### Nix (Recommended)
