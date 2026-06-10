@@ -109,12 +109,32 @@ logos-package/
 - No original filename
 - OS byte = 0xFF (unknown)
 
+**Decompression-bomb protection:** Both decompression paths enforce a hard cap on
+total decompressed output (`DEFAULT_MAX_DECOMPRESSED_SIZE` = 1 GiB by default). A
+gzip stream that would inflate past the cap is rejected before the excess bytes
+are materialized, so a tiny but highly-compressible archive cannot exhaust host
+memory. `Package::load()` decompresses untrusted `.lgx` data through this guard,
+which also bounds the buffer handed to `TarReader`.
+
+The limit is configurable two ways:
+- **Library-wide:** `setDefaultMaxDecompressedSize(bytes)` changes the default
+  for every subsequent call that does not pass an explicit cap (including the
+  `.lgx` load path). `getDefaultMaxDecompressedSize()` reads the current value.
+  It is thread-safe; passing `0` is rejected so bomb protection cannot be
+  silently disabled.
+- **Per call:** pass `maxOutputSize` to `decompress` / `decompressStream` for
+  callers with larger legitimate payloads. The default argument
+  (`USE_DEFAULT_MAX`) means "use the library-wide value".
+
 **API:**
 
 | Method | Description |
 |--------|-------------|
 | `compress(data) → vector<uint8_t>` | Compress data with deterministic settings |
-| `decompress(data) → vector<uint8_t>` | Decompress gzip data |
+| `decompress(data, maxOutputSize=USE_DEFAULT_MAX) → vector<uint8_t>` | Decompress gzip data, rejecting streams that exceed the output cap |
+| `decompressStream(data, writeCallback, maxOutputSize=USE_DEFAULT_MAX) → bool` | Stream-decompress with the same running-total output cap |
+| `setDefaultMaxDecompressedSize(bytes)` | Set the library-wide default output cap (thread-safe; `0` ignored) |
+| `getDefaultMaxDecompressedSize() → size_t` | Read the current library-wide default output cap |
 | `isGzipData(data) → bool` | Check if data has gzip magic bytes |
 | `getLastError() → string` | Get last error message |
 

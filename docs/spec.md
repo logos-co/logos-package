@@ -231,6 +231,32 @@ prevents zip-slip / path-traversal arbitrary file writes from an untrusted
 
 These are forbidden for portability and security: links can escape variant roots or behave differently on extract; special files are unsafe/meaningless for plugins.
 
+### Decompression Limits
+
+A `.lgx` is a gzip-compressed tar archive, and DEFLATE can reach compression
+ratios on the order of 1000:1. Left unbounded, a small crafted archive could
+inflate to gigabytes when loaded and exhaust the host's memory — a
+"decompression bomb" that OOM-kills or hangs the process loading it (basecamp
+and every in-process module).
+
+To prevent this, decompression enforces a **hard cap on total decompressed
+output** (1 GiB by default). The gzip reader tracks a running total as it
+inflates and rejects the stream the moment the output would exceed the cap,
+before the excess bytes are allocated — so the cost of an oversized archive is
+bounded regardless of how small the compressed input is. Loading an untrusted
+`.lgx` (`lgx verify`, `lgpm install`, signature inspection, the `lgx_*` C API)
+runs through this guard, which also bounds the buffer subsequently handed to the
+tar reader. A package whose contents exceed the cap is rejected with an error
+and no oversized buffer is ever materialized.
+
+The cap applies to the **whole archive** — the total size of the decompressed
+tar (every entry plus tar overhead), not any single file within it. It is
+configurable by embedders of the library: globally via
+`GzipHandler::setDefaultMaxDecompressedSize(bytes)` (affects every load that
+does not specify its own limit) or per call via the `maxOutputSize` argument to
+`decompress` / `decompressStream`. There is no "unlimited" setting — a `0`
+value is rejected — so the protection cannot be turned off by misconfiguration.
+
 ### Package Creation Workflow
 
 ```
