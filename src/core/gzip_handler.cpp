@@ -8,6 +8,24 @@ namespace lgx {
 
 thread_local std::string GzipHandler::lastError_;
 
+std::atomic<size_t> GzipHandler::defaultMaxDecompressedSize_{
+    GzipHandler::DEFAULT_MAX_DECOMPRESSED_SIZE
+};
+
+void GzipHandler::setDefaultMaxDecompressedSize(size_t maxBytes) {
+    // Reject 0: there is no "unlimited" mode, so a bad config can't silently
+    // disable bomb protection. USE_DEFAULT_MAX (0) is reserved as the per-call
+    // "use library default" sentinel and must never become the stored value.
+    if (maxBytes == 0) {
+        return;
+    }
+    defaultMaxDecompressedSize_.store(maxBytes, std::memory_order_relaxed);
+}
+
+size_t GzipHandler::getDefaultMaxDecompressedSize() {
+    return defaultMaxDecompressedSize_.load(std::memory_order_relaxed);
+}
+
 std::vector<uint8_t> GzipHandler::compress(const std::vector<uint8_t>& data) {
     if (data.empty()) {
         // Return valid empty gzip for empty input
@@ -142,45 +160,63 @@ std::vector<uint8_t> GzipHandler::compressStream(
     return compress(data);
 }
 
-std::vector<uint8_t> GzipHandler::decompress(const std::vector<uint8_t>& data) {
+std::vector<uint8_t> GzipHandler::decompress(
+    const std::vector<uint8_t>& data,
+    size_t maxOutputSize
+) {
+    if (maxOutputSize == USE_DEFAULT_MAX) {
+        maxOutputSize = getDefaultMaxDecompressedSize();
+    }
+
     if (!isGzipData(data)) {
         lastError_ = "Not valid gzip data";
         return {};
     }
-    
+
     std::vector<uint8_t> result;
-    
+
     // Initialize inflate with gzip detection
     z_stream strm;
     std::memset(&strm, 0, sizeof(strm));
-    
+
     int ret = inflateInit2(&strm, 16 + MAX_WBITS);  // 16 = gzip decoding
     if (ret != Z_OK) {
         lastError_ = "Failed to initialize inflate: " + std::to_string(ret);
         return {};
     }
-    
+
     strm.next_in = const_cast<Bytef*>(data.data());
     strm.avail_in = static_cast<uInt>(data.size());
-    
+
     std::array<uint8_t, 32768> outBuf;
-    
+
     do {
         strm.next_out = outBuf.data();
         strm.avail_out = outBuf.size();
-        
+
         ret = inflate(&strm, Z_NO_FLUSH);
-        
-        if (ret == Z_STREAM_ERROR || ret == Z_NEED_DICT || 
+
+        if (ret == Z_STREAM_ERROR || ret == Z_NEED_DICT ||
             ret == Z_DATA_ERROR || ret == Z_MEM_ERROR) {
             inflateEnd(&strm);
             lastError_ = "Inflate error: " + std::to_string(ret);
             return {};
         }
-        
+
         size_t have = outBuf.size() - strm.avail_out;
+
+        // Decompression-bomb guard: reject the stream before appending any
+        // chunk that would push total output past the cap. This bounds memory
+        // even for a tiny archive that inflates to gigabytes (see F-007).
+        if (have > maxOutputSize - result.size()) {
+            inflateEnd(&strm);
+            lastError_ = "Decompressed size exceeds limit of " +
+                         std::to_string(maxOutputSize) + " bytes";
+            return {};
+        }
+
         result.insert(result.end(), outBuf.begin(), outBuf.begin() + have);
-        
+
         // Check for truncated data: input exhausted but stream not ended
         if (strm.avail_in == 0 && ret != Z_STREAM_END) {
             inflateEnd(&strm);
@@ -188,48 +224,65 @@ std::vector<uint8_t> GzipHandler::decompress(const std::vector<uint8_t>& data) {
             return {};
         }
     } while (ret != Z_STREAM_END);
-    
+
     inflateEnd(&strm);
     return result;
 }
 
 bool GzipHandler::decompressStream(
     const std::vector<uint8_t>& data,
-    std::function<bool(const uint8_t* buffer, size_t size)> writeCallback
+    std::function<bool(const uint8_t* buffer, size_t size)> writeCallback,
+    size_t maxOutputSize
 ) {
+    if (maxOutputSize == USE_DEFAULT_MAX) {
+        maxOutputSize = getDefaultMaxDecompressedSize();
+    }
+
     if (!isGzipData(data)) {
         lastError_ = "Not valid gzip data";
         return false;
     }
-    
+
     z_stream strm;
     std::memset(&strm, 0, sizeof(strm));
-    
+
     int ret = inflateInit2(&strm, 16 + MAX_WBITS);
     if (ret != Z_OK) {
         lastError_ = "Failed to initialize inflate: " + std::to_string(ret);
         return false;
     }
-    
+
     strm.next_in = const_cast<Bytef*>(data.data());
     strm.avail_in = static_cast<uInt>(data.size());
-    
+
     std::array<uint8_t, 32768> outBuf;
-    
+    size_t totalOut = 0;
+
     do {
         strm.next_out = outBuf.data();
         strm.avail_out = outBuf.size();
-        
+
         ret = inflate(&strm, Z_NO_FLUSH);
-        
-        if (ret == Z_STREAM_ERROR || ret == Z_NEED_DICT || 
+
+        if (ret == Z_STREAM_ERROR || ret == Z_NEED_DICT ||
             ret == Z_DATA_ERROR || ret == Z_MEM_ERROR) {
             inflateEnd(&strm);
             lastError_ = "Inflate error: " + std::to_string(ret);
             return false;
         }
-        
+
         size_t have = outBuf.size() - strm.avail_out;
+
+        // Decompression-bomb guard: reject before forwarding any chunk that
+        // would push the running total past the cap (see F-007).
+        if (have > maxOutputSize - totalOut) {
+            inflateEnd(&strm);
+            lastError_ = "Decompressed size exceeds limit of " +
+                         std::to_string(maxOutputSize) + " bytes";
+            return false;
+        }
+        totalOut += have;
+
         if (have > 0) {
             if (!writeCallback(outBuf.data(), have)) {
                 inflateEnd(&strm);
@@ -237,7 +290,7 @@ bool GzipHandler::decompressStream(
                 return false;
             }
         }
-        
+
         // Check for truncated data: input exhausted but stream not ended
         if (strm.avail_in == 0 && ret != Z_STREAM_END) {
             inflateEnd(&strm);
@@ -245,7 +298,7 @@ bool GzipHandler::decompressStream(
             return false;
         }
     } while (ret != Z_STREAM_END);
-    
+
     inflateEnd(&strm);
     return true;
 }
