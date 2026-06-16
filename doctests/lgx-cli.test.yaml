@@ -1,0 +1,259 @@
+name: "Packaging a Module with lgx"
+output: lgx-cli.md
+release: ""
+
+intro: |
+  [`lgx`](https://github.com/logos-co/logos-package) is the Logos **package tool**.
+  An `.lgx` file is just a **gzipped tar archive** with a `manifest.json` at its root
+  and one or more platform payloads under `variants/<platform>/`. `lgx` is the CLI that
+  builds, inspects, extracts, merges, and (in the companion
+  [signing doc-test](lgx-signing.md)) signs those archives — a self-contained C++ tool
+  with no Qt and no module runtime behind it.
+
+  This doc-test builds **this** `lgx` commit and drives the full packaging lifecycle:
+
+  1. Build the `lgx` CLI from this repository's flake.
+  2. `create` an empty package and read its `manifest`.
+  3. `add` this machine's platform variant and `verify` the result.
+  4. `extract` a variant back out, and inspect the raw archive with `tar`.
+  5. `merge` two single-variant packages into one multi-variant `.lgx`.
+
+  Every command is the real binary built from the commit under test, so a green run is
+  evidence that this change keeps the packaging workflow working end-to-end.
+
+what_you_build: "A `greeter.lgx` package built, inspected, and extracted with `lgx`, plus a multi-variant `widget.lgx` assembled with `lgx merge`."
+
+what_you_learn:
+  - What an `.lgx` package is on disk (a gzipped tar of a manifest + a `variants/` tree)
+  - How to create a package and read its manifest with `lgx create` / `lgx manifest`
+  - How to add a platform variant, verify structural validity, and extract it back out
+  - How to merge per-platform single-variant packages into one multi-variant `.lgx`
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+    Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
+  - "A Linux or macOS machine."
+
+sections:
+  - title: "Build the lgx CLI"
+    step: true
+    text: |
+      `lgx` ships as a C++ CLI. Build it straight from the flake's `#lgx` output and
+      link the result as `./lgx`, so the binary lands at `./lgx/bin/lgx`.
+
+      > The `{release}` in the URL is what pins the build to a specific commit: the
+      > doc-test runner expands it to a concrete ref. Locally that is this checkout's
+      > `HEAD` (see `run.sh`); in CI it is the commit being tested. With no pin it falls
+      > back to the latest `master`. Developing against a local checkout? Replace the
+      > GitHub reference with `.`, e.g. `nix build '.#lgx' -o lgx`.
+    steps:
+      - title: "Build lgx"
+        run: "nix build 'github:logos-co/logos-package{release}#lgx' -o lgx"
+        code_block: |
+          # From inside the clone this is simply: nix build '.#lgx' -o lgx
+          nix build 'github:logos-co/logos-package{release}#lgx' -o lgx
+        post_text: "The `-o lgx` flag names the result symlink, so the executable is at `./lgx/bin/lgx`."
+
+      - title: "Confirm it runs"
+        run: "./lgx/bin/lgx --version"
+        expect_contains:
+          - "lgx version"
+        check_file: "lgx/bin/lgx"
+
+  - title: "Detect the platform variant"
+    step: true
+    text: |
+      An `.lgx` package carries one or more **platform variants** — `linux-x86_64`,
+      `darwin-arm64`, and so on — each holding the payload for that platform. Detect this
+      machine's variant once (and the matching shared-library extension, `.so` on Linux /
+      `.dylib` on macOS) and stash both in files so the packaging steps below can reuse
+      them.
+    steps:
+      - title: "Write the variant and library extension to ./variant and ./ext"
+        run: |
+          case "$(uname -s) $(uname -m)" in
+            "Linux x86_64")   echo linux-x86_64  > variant; echo so    > ext ;;
+            "Linux aarch64")  echo linux-arm64   > variant; echo so    > ext ;;
+            "Darwin arm64")   echo darwin-arm64  > variant; echo dylib > ext ;;
+            "Darwin x86_64")  echo darwin-x86_64 > variant; echo dylib > ext ;;
+            *) echo "unsupported platform: $(uname -sm)" >&2; exit 1 ;;
+          esac
+          echo "variant: $(cat variant)  ext: $(cat ext)"
+        expect_contains:
+          - "variant:"
+
+  - title: "Create a package"
+    step: true
+    text: |
+      `lgx create <name>` writes an empty skeleton package — a `manifest.json` with
+      sensible defaults plus an empty `variants/` directory — to `<name>.lgx`.
+    steps:
+      - title: "Create greeter.lgx"
+        run: "./lgx/bin/lgx create greeter"
+        expect_contains:
+          - "Created package: greeter.lgx"
+        check_file: "greeter.lgx"
+
+      - title: "Read the fresh manifest"
+        text: |
+          `lgx manifest` prints the embedded `manifest.json` in human-readable form. A
+          freshly created package starts at version `0.0.1`, manifest schema `0.3.0`, with
+          no type, no variants, and no signature yet.
+        run: "./lgx/bin/lgx manifest greeter.lgx"
+        code_block: "lgx manifest greeter.lgx"
+        expect_contains:
+          - "greeter"
+          - "0.0.1"
+          - "Manifest ver.:"
+          - "0.3.0"
+          - "Variants:       (none)"
+          - "Signed:         no"
+
+  - title: "Add a platform variant"
+    step: true
+    text: |
+      `lgx add` drops a payload into the package under `variants/<variant>/` and records
+      the entry point in the manifest's `main` map. We add a stub shared library for this
+      machine's variant. (In a real build the payload is the module's compiled `.so` /
+      `.dylib`; `lgx` does not load it — it just packages it.)
+    steps:
+      - title: "Add this machine's variant"
+        run: |
+          V="$(cat variant)"; E="$(cat ext)"
+          echo 'stub library' > "libgreeter.$E"
+          ./lgx/bin/lgx add greeter.lgx --variant "$V" --files "libgreeter.$E"
+        code_block: |
+          # On Linux x86_64 this expands to:
+          echo 'stub library' > libgreeter.so
+          lgx add greeter.lgx --variant linux-x86_64 --files libgreeter.so
+        expect_contains:
+          - "Added variant"
+          - "to greeter.lgx"
+        post_text: "Confirm the archive layout — a `manifest.json` beside the `variants/` tree:"
+        extra_run:
+          run: "tar -tzf greeter.lgx"
+          post_text: |
+            ```
+            manifest.json
+            variants/
+            variants/<platform>/
+            variants/<platform>/libgreeter.so   # .dylib on macOS
+            ```
+
+      - title: "See the variant in the manifest"
+        text: |
+          The manifest now lists the variant and points its `main` entry at the file we
+          added. A content hash (`Root hash`) is recomputed on every save.
+        run: "./lgx/bin/lgx manifest greeter.lgx"
+        code_block: "lgx manifest greeter.lgx"
+        expect_contains:
+          - "Root hash:"
+          - "Variants:"
+          - "libgreeter."
+
+  - title: "Verify the package"
+    step: true
+    text: |
+      `lgx verify` validates a package against the LGX spec — it recomputes the content
+      hashes (the Merkle tree) and checks them against the manifest, then reports the
+      signature state. Our package is unsigned, so verification passes and notes it is
+      unsigned. The exit code is `0` on success, so `verify` is safe to gate CI on.
+    steps:
+      - title: "Verify greeter.lgx"
+        run: "./lgx/bin/lgx verify greeter.lgx"
+        code_block: "lgx verify greeter.lgx"
+        expect_contains:
+          - "Package structure is valid: greeter.lgx"
+          - "Package is unsigned"
+
+  - title: "Extract a variant"
+    step: true
+    text: |
+      `lgx extract` unpacks a variant's payload back onto disk — the inverse of `add`.
+      Files land under `<output>/<variant>/`.
+    steps:
+      - title: "Extract this machine's variant"
+        run: |
+          V="$(cat variant)"
+          ./lgx/bin/lgx extract greeter.lgx --variant "$V" --output ./extracted
+        code_block: |
+          lgx extract greeter.lgx --variant linux-x86_64 --output ./extracted
+        expect_contains:
+          - "Extracted variant"
+          - "./extracted"
+        post_text: "The payload is now on disk under `./extracted/<variant>/`:"
+        extra_run:
+          run: |
+            V="$(cat variant)"
+            ls "./extracted/$V"
+          code_block: "ls ./extracted/<variant>"
+
+  - title: "Merge per-platform packages"
+    step: true
+    text: |
+      Real releases ship one `.lgx` covering every platform. A common pattern is to build
+      a **single-variant** package on each platform's CI runner, then `lgx merge` them
+      into one multi-variant archive. The inputs must share identical metadata (only the
+      variant-specific `main` entries differ). We simulate it here by hand-building a
+      Linux and a macOS package for the same module and merging them.
+    steps:
+      - title: "Build two single-variant packages"
+        run: |
+          # A Linux-only package...
+          ./lgx/bin/lgx create widget && mv widget.lgx widget-linux.lgx
+          echo 'linux stub' > libwidget.so
+          ./lgx/bin/lgx add widget-linux.lgx --variant linux-x86_64 --files libwidget.so
+
+          # ...and a macOS-only package for the same module.
+          ./lgx/bin/lgx create widget && mv widget.lgx widget-darwin.lgx
+          echo 'darwin stub' > libwidget.dylib
+          ./lgx/bin/lgx add widget-darwin.lgx --variant darwin-arm64 --files libwidget.dylib
+        expect_contains:
+          - "Added variant"
+
+      - title: "Merge them into one .lgx"
+        text: |
+          `lgx merge` writes a single package carrying both variants. The variants are
+          listed alphabetically in the summary.
+        run: "./lgx/bin/lgx merge widget-linux.lgx widget-darwin.lgx -o widget.lgx"
+        code_block: "lgx merge widget-linux.lgx widget-darwin.lgx -o widget.lgx"
+        expect_contains:
+          - "Merged 2 packages into widget.lgx (darwin-arm64, linux-x86_64)"
+
+      - title: "Confirm both variants are present"
+        text: "The merged manifest carries both platforms, and the package verifies:"
+        run: "./lgx/bin/lgx manifest widget.lgx"
+        code_block: "lgx manifest widget.lgx"
+        expect_contains:
+          - "darwin-arm64"
+          - "linux-x86_64"
+
+      - run: "./lgx/bin/lgx verify widget.lgx"
+        code_block: "lgx verify widget.lgx"
+        expect_contains:
+          - "Package structure is valid: widget.lgx"
+
+  - title: "Recap"
+    text: |
+      You built `lgx` from this commit and ran a full packaging lifecycle — creating a
+      package, adding a platform variant, verifying it, extracting it, and merging
+      per-platform packages into one multi-variant `.lgx`:
+
+      | Command | What it does |
+      |---|---|
+      | `create <name>` | Write an empty skeleton `<name>.lgx` |
+      | `add <pkg> -v <variant> -f <path>` | Add a payload for a variant (records `main`) |
+      | `manifest <pkg> [--json]` | Print the embedded `manifest.json` (`--json` for raw bytes) |
+      | `verify <pkg>` | Validate structure + content hashes, report signature state |
+      | `extract <pkg> -v <variant> -o <dir>` | Unpack a variant's payload to disk |
+      | `merge <pkg…> -o <out>` | Combine single-variant packages into one multi-variant `.lgx` |
+
+      Signing, signature inspection, and trusted-key management are covered in the
+      companion [signing doc-test](lgx-signing.md).
