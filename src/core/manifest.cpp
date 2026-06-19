@@ -231,6 +231,15 @@ std::optional<Manifest> Manifest::fromJson(const std::string& jsonStr) {
             m.view = j["view"].get<std::string>();
         }
 
+        // "display_name" — optional human-readable label.
+        if (j.contains("display_name")) {
+            if (!j["display_name"].is_string()) {
+                lastError_ = "Invalid 'display_name' field (must be a string)";
+                return std::nullopt;
+            }
+            m.displayName = j["display_name"].get<std::string>();
+        }
+
         return m;
     } catch (const json::exception& e) {
         lastError_ = std::string("JSON parse error: ") + e.what();
@@ -286,6 +295,9 @@ std::string Manifest::toJson() const {
     // Optional fields: only emit if set
     if (!view.empty()) {
         j["view"] = view;
+    }
+    if (!displayName.empty()) {
+        j["display_name"] = displayName;
     }
 
     // Serialize with 2-space indent, sorted keys
@@ -472,6 +484,8 @@ Manifest::ValidationResult Manifest::compareMetadata(const Manifest& other) cons
         result.addError("dependencies differ");
     if (type == "ui_qml" && other.type == "ui_qml" && view != other.view)
         result.addError("view: '" + view + "' vs '" + other.view + "'");
+    if (displayName != other.displayName)
+        result.addError("display_name: '" + displayName + "' vs '" + other.displayName + "'");
 
     return result;
 }

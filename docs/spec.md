@@ -91,8 +91,9 @@ The current manifest schema is `0.3.0`. It is a UTF-8 encoded JSON file with the
 | `icon` | string | Relative path to icon file bundled in the package | Display/branding |
 | `dependencies` | array | List of dependency entries — see *Dependency entries* below | Runtime needs |
 | `main` | object | Map of variant name → relative path to entry point (e.g ) `"linux-amd64": "path/to/main.so"` means `linux-amd64/path/to/main.so` | Entry point resolution |
+| `display_name` | string | *Optional.* Human-readable label shown by UI consumers (Package Manager, App Manager) and CLI tools (`lm metadata`, `lgx manifest`). Falls back to `name` when absent. | Display/branding |
 
-All fields are required to ensure consistent metadata for hosts/registries and applications.
+All fields except `display_name` are required to ensure consistent metadata for hosts/registries and applications.
 
 #### Dependency entries
 
@@ -372,7 +373,7 @@ lgx merge <pkg1.lgx> <pkg2.lgx> ... [-o <output.lgx>] [--skip-duplicates] [-y]
 1. Verify all input package files exist; if any missing, exit with error
 2. Load all input packages
 3. Compare manifests across all inputs, ignoring the `main` field (which is variant-specific):
-   - All non-variant fields must be identical (`manifestVersion`, `name`, `version`, `description`, `author`, `type`, `category`, `icon`, `dependencies`)
+   - All non-variant fields must be identical (`manifestVersion`, `name`, `version`, `description`, `author`, `type`, `category`, `icon`, `dependencies`, `display_name`)
    - If any mismatch is found, report all mismatching fields and exit with error
 4. Check for duplicate variants across all input packages:
    - By default, exit with error if any variant appears in more than one input
