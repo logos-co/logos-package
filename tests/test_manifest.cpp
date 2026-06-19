@@ -219,6 +219,41 @@ TEST(ManifestTest, ToJson_RoundtripPreservesViewWithoutMain) {
     EXPECT_EQ(parsed->view, "qml/Main.qml");
 }
 
+TEST(ManifestTest, ToJson_RoundtripPreservesDisplayName) {
+    const char* json = R"({
+      "manifestVersion": "0.3.0",
+      "name": "test",
+      "version": "1.0.0",
+      "description": "",
+      "author": "",
+      "type": "core",
+      "category": "",
+      "icon": "",
+      "dependencies": [],
+      "display_name": "Friendly Label"
+    })";
+
+    auto original = Manifest::fromJson(json);
+    ASSERT_TRUE(original.has_value());
+    EXPECT_EQ(original->displayName, "Friendly Label");
+
+    std::string serialized = original->toJson();
+    auto parsed = Manifest::fromJson(serialized);
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->displayName, "Friendly Label");
+}
+
+TEST(ManifestTest, ToJson_OmitsDisplayNameWhenUnset) {
+    auto manifest = Manifest::fromJson(VALID_MANIFEST_JSON);
+    ASSERT_TRUE(manifest.has_value());
+    ASSERT_TRUE(manifest->displayName.empty());
+
+    // Should not emit "display_name" in the serialized form so older
+    // packages round-trip byte-identically.
+    std::string json = manifest->toJson();
+    EXPECT_EQ(json.find("display_name"), std::string::npos);
+}
+
 TEST(ManifestTest, ToJson_Deterministic) {
     auto manifest = Manifest::fromJson(VALID_MANIFEST_JSON);
     ASSERT_TRUE(manifest.has_value());
@@ -539,6 +574,20 @@ TEST(ManifestTest, CompareMetadata_DifferentVersion) {
     EXPECT_FALSE(result.valid);
     ASSERT_FALSE(result.errors.empty());
     EXPECT_NE(result.errors[0].find("version"), std::string::npos);
+}
+
+TEST(ManifestTest, CompareMetadata_DifferentDisplayName) {
+    auto a = Manifest::fromJson(VALID_MANIFEST_JSON);
+    auto b = Manifest::fromJson(VALID_MANIFEST_JSON);
+    ASSERT_TRUE(a.has_value());
+    ASSERT_TRUE(b.has_value());
+
+    b->displayName = "Other Label";
+
+    auto result = a->compareMetadata(*b);
+    EXPECT_FALSE(result.valid);
+    ASSERT_FALSE(result.errors.empty());
+    EXPECT_NE(result.errors[0].find("display_name"), std::string::npos);
 }
 
 TEST(ManifestTest, CompareMetadata_DifferentDependencies) {
