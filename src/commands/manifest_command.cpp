@@ -53,6 +53,8 @@ void printHumanReadable(const Package& pkg) {
     const Manifest& m = pkg.getManifest();
 
     std::cout << "Name:           " << m.name << "\n"
+              << "Display name:   "
+              << (m.displayName.empty() ? "(unset — falls back to name)" : m.displayName) << "\n"
               << "Version:        " << m.version << "\n"
               << "Manifest ver.:  " << m.manifestVersion << "\n"
               << "Type:           " << (m.type.empty() ? "(unset)" : m.type) << "\n"

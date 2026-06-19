@@ -92,6 +92,9 @@ public:
     std::string category;
     std::string icon;
     std::vector<Dependency> dependencies;
+
+    // human-readable label; consumers fall back to `name` when unset.
+    std::string displayName;
     
     // Main mapping: variant -> relative path to entry point
     std::map<std::string, std::string> main;
