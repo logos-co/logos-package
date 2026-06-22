@@ -133,6 +133,7 @@ int MergeCommand::execute(const std::vector<std::string>& args) {
     Manifest& mergedManifest = merged.getManifest();
     mergedManifest.manifestVersion = refManifest.manifestVersion;
     mergedManifest.name = refManifest.name;
+    mergedManifest.displayName = refManifest.displayName;
     mergedManifest.version = refManifest.version;
     mergedManifest.description = refManifest.description;
     mergedManifest.author = refManifest.author;
