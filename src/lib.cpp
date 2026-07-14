@@ -10,6 +10,7 @@
 #include "core/manifest.h"
 #include "crypto/signing.h"
 #include "crypto/keyring.h"
+#include "logos/semver.hpp"
 
 #include <string>
 #include <vector>
@@ -615,6 +616,25 @@ LGX_EXPORT void lgx_free_verify_result(lgx_verify_result_t result) {
 
 LGX_EXPORT const char* lgx_get_last_error(void) {
     return g_last_error.c_str();
+}
+
+/* Semver */
+
+LGX_EXPORT int lgx_semver_compare(const char* a, const char* b) {
+    return logos::semver::compare(a ? a : "", b ? b : "");
+}
+
+LGX_EXPORT bool lgx_semver_valid(const char* version) {
+    return version && logos::semver::valid(version);
+}
+
+LGX_EXPORT bool lgx_semver_satisfies(const char* version, const char* range) {
+    if (!version) return false;
+    return logos::semver::satisfies(version, range ? range : "");
+}
+
+LGX_EXPORT bool lgx_semver_valid_range(const char* range) {
+    return range && logos::semver::valid_range(range);
 }
 
 /* Version info */

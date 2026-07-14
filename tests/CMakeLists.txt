@@ -10,6 +10,7 @@ add_executable(lgx_tests
     test_package.cpp
     test_crypto.cpp
     test_cli.cpp
+    test_semver.cpp
 )
 
 # Link with appropriate GTest targets (handles both find_package and FetchContent)

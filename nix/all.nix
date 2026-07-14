@@ -48,10 +48,15 @@ pkgs.stdenv.mkDerivation {
       cp build/lgx.lib $out/lib/ 2>/dev/null || true
     fi
     
-    # Install headers
+    # Install headers. See nix/lib.nix — logos/semver.hpp is the shared semver
+    # implementation and needs the cpp-semver header vendored beside it so a
+    # single include dir is enough for every consumer.
     mkdir -p $out/include
     cp ${src}/src/lgx.h $out/include/
-    
+    cp -r ${src}/include/logos $out/include/
+    mkdir -p $out/include/semver
+    cp ${common.cpp-semver}/include/semver/semver.hpp $out/include/semver/
+
     runHook postInstall
   '';
   

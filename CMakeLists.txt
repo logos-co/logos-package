@@ -57,6 +57,23 @@ if(NOT nlohmann_json_FOUND)
     FetchContent_MakeAvailable(json)
 endif()
 
+# cpp-semver — the SemVer 2.0.0 precedence engine behind include/logos/semver.hpp.
+# Same find_package-then-FetchContent shape as nlohmann_json above; under Nix it
+# is supplied by nix/cpp-semver.nix (the sandbox has no network for FetchContent).
+find_package(semver 0.4.0 QUIET)
+if(NOT semver_FOUND)
+    message(STATUS "cpp-semver not found, fetching from GitHub")
+    include(FetchContent)
+    FetchContent_Declare(
+        cpp_semver
+        GIT_REPOSITORY https://github.com/z4kn4fein/cpp-semver.git
+        GIT_TAG v0.4.0
+    )
+    set(SEMVER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(SEMVER_INSTALL OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(cpp_semver)
+endif()
+
 # Core library
 add_library(lgx_core STATIC
     src/core/path_normalizer.cpp
@@ -84,6 +101,7 @@ target_link_libraries(lgx_core PUBLIC
     ICU::uc
     ICU::i18n
     nlohmann_json::nlohmann_json
+    semver::semver
     ${SODIUM_LIBRARIES}
 )
 
@@ -114,6 +132,7 @@ if(LGX_BUILD_SHARED)
         ICU::uc
         ICU::i18n
         nlohmann_json::nlohmann_json
+        semver::semver
         ${SODIUM_LIBRARIES}
     )
     
@@ -149,6 +168,7 @@ add_executable(lgx
     src/commands/keyring_command.cpp
     src/commands/manifest_command.cpp
     src/commands/signature_command.cpp
+    src/commands/semver_command.cpp
 )
 
 target_link_libraries(lgx PRIVATE lgx_core)
@@ -156,6 +176,11 @@ target_link_libraries(lgx PRIVATE lgx_core)
 # Installation
 install(TARGETS lgx RUNTIME DESTINATION bin)
 install(TARGETS lgx_core ARCHIVE DESTINATION lib)
+
+# Public headers. logos/semver.hpp is the shared semver implementation that
+# lgpm, lgpd and the package-manager UI all include, so it has to ship with the
+# library rather than stay internal to this repo.
+install(DIRECTORY include/logos DESTINATION include)
 
 # Testing (optional)
 option(LGX_BUILD_TESTS "Build tests" OFF)
