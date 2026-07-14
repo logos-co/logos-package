@@ -21,4 +21,7 @@ jobs:
           experimental-features = nix-command flakes
 
     - name: Build and test
-      run: nix build
+      # -L prints full build logs. Without it nix truncates a failing build to
+      # its last 25 lines, which hides the first compiler error -- the only one
+      # that usually matters.
+      run: nix build -L
