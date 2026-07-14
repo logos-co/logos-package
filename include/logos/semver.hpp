@@ -31,6 +31,16 @@
 #ifndef LOGOS_SEMVER_HPP
 #define LOGOS_SEMVER_HPP
 
+// <cstdint> MUST come before <semver/semver.hpp>.
+//
+// cpp-semver 0.4.0 uses uint64_t throughout but never includes <cstdint>
+// itself (upstream bug). libc++ happens to drag it in transitively via
+// <string>/<regex>, so this builds on macOS — but libstdc++ stopped doing that
+// in GCC 13, and on Linux the header then fails to parse with "'uint64_t' does
+// not name a type", which collapses semver::version and surfaces as a wall of
+// bogus "has no member named 'major'" errors in THIS file.
+#include <cstdint>
+
 #include <semver/semver.hpp>
 
 #include <algorithm>
