@@ -205,10 +205,18 @@ inline std::optional<partial> parse_partial(const std::string& body)
 
     int specified = 0;
     std::string norm[3] = {"0", "0", "0"};
-    for (size_t i = 0; i < parts.size(); ++i) {
+    size_t i = 0;
+    for (; i < parts.size(); ++i) {
         if (is_wildcard(parts[i]) || parts[i].empty()) break;  // wildcard ends the pin
         norm[i] = parts[i];
         ++specified;
+    }
+    // Once a component is a wildcard (or empty), every later component must be
+    // too. Otherwise `1.x.3`, `1..2` and `x.1` would silently widen to `1.x` /
+    // `1` / `*` — accepting a range the resolver can't faithfully evaluate,
+    // which breaks the syntax-validation contract valid_range() promises.
+    for (size_t j = i; j < parts.size(); ++j) {
+        if (!is_wildcard(parts[j]) && !parts[j].empty()) return std::nullopt;
     }
     if (specified == 0 && !suffix.empty()) return std::nullopt;  // `x-rc.1` is nonsense
 

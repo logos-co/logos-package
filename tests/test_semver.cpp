@@ -247,6 +247,18 @@ TEST(Semver, RangeSyntaxValidation) {
     // Hyphen ranges are npm syntax we deliberately do not support. Reject them
     // rather than silently misreading the `-` as part of a version.
     EXPECT_FALSE(valid_range("1.2.3 - 2.3.4"));
+
+    // A wildcard (or empty) component must not be followed by a concrete one.
+    // These previously slipped through and silently widened: `1.x.3` -> `1.x`,
+    // `1..2` -> `1`, `x.1` -> `*`. A range must not claim more than it means.
+    EXPECT_FALSE(valid_range("1.x.3"));
+    EXPECT_FALSE(valid_range("1..2"));
+    EXPECT_FALSE(valid_range("x.1"));
+    EXPECT_FALSE(valid_range(".1.2"));
+    // ...but a trailing wildcard is the normal, valid form.
+    EXPECT_TRUE(valid_range("1.2.x"));
+    EXPECT_TRUE(valid_range("1.x"));
+    EXPECT_TRUE(valid_range("^1.x"));
 }
 
 // An absent `version` field means "no constraint", which is distinct from an

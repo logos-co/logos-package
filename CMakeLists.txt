@@ -72,6 +72,12 @@ if(NOT semver_FOUND)
     set(SEMVER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(SEMVER_INSTALL OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(cpp_semver)
+    # We install include/logos/semver.hpp as a public header, and it includes
+    # <semver/semver.hpp>. With SEMVER_INSTALL off, the FetchContent path
+    # wouldn't install that dependency header, so a downstream `cmake --install`
+    # consumer would fail to compile. Install it alongside ours. (The
+    # find_package path needn't: Nix supplies and vendors the header itself.)
+    install(DIRECTORY ${cpp_semver_SOURCE_DIR}/include/semver DESTINATION include)
 endif()
 
 # Core library
