@@ -190,7 +190,43 @@ tar -tzf mymodule.lgx
 | `lgx sign <pkg> --key <name> [--keys-dir <dir>] [--name "..."] [--url "..."]` | Sign package with Ed25519 key and DID identity |
 | `lgx keygen --name <name> [--output-dir <dir>]` | Generate an Ed25519 signing keypair (outputs DID) |
 | `lgx keyring add\|remove\|list [--dir <dir>]` | Manage trusted keys (by DID) |
+| `lgx semver compare\|sort\|satisfies\|valid\|valid-range` | Compare, sort and range-match versions (see below) |
 | `lgx publish <pkg>` | Publish package (TODO) |
+
+## Semver
+
+`lgx` owns the one semver implementation for the whole packaging stack. `lgpm`,
+`lgpd` and the package-manager UI all include it directly
+(`include/logos/semver.hpp`); everything else reaches it through `lgx semver`.
+That matters most for the catalog builder
+([logos-modules-release-tool](https://github.com/logos-co/logos-modules-release-tool)'s
+`index.py`), which orders each package's `versions[]` — it shells out here
+rather than reimplementing semver in Python, so the catalog can never disagree
+with the clients about which version is newest.
+
+Precedence is [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html) §10–§11 exactly:
+a pre-release ranks below its own release, numeric pre-release identifiers compare
+**numerically** (`1.0.0-rc.2` < `1.0.0-rc.11`), and build metadata is ignored.
+
+```bash
+lgx semver compare 1.0.0-rc.2 1.0.0-rc.11   # -> -1
+lgx semver sort --desc 1.0.0 2.0.0-alpha 1.9.0
+lgx semver satisfies 1.5.0 '^1.0.0'          # exit 0
+lgx semver satisfies 2.0.0-alpha '^1.0.0'    # exit 1 — see the pre-release rule below
+lgx semver valid 1.0.0                       # exit 0
+lgx semver valid-range '>=1.0 <2.0'          # exit 0
+```
+
+**Ranges are npm's dialect, not the spec's** — SemVer 2.0.0 defines precedence
+but says nothing about `^ ~ x * ||`. Supported: `^`, `~`, `=`, `>`, `>=`, `<`,
+`<=`, `x`/`X`/`*` wildcards, whitespace conjunction, `||` alternation. Hyphen
+ranges (`1.2.3 - 2.3.4`) are not supported and are rejected rather than
+misread.
+
+Also following npm: **a range never matches a pre-release unless the range
+itself names one at the same `major.minor.patch`.** So `^1.0.0` does *not* match
+`2.0.0-alpha` — without that rule an unreleased alpha of the next major
+satisfies a caret range on 1.x — while `^1.0.0-rc.1` still matches `1.0.0-rc.2`.
 
 ## Package Structure
 
@@ -267,7 +303,14 @@ Each `dependencies[]` element is one of:
 `lgx verify` syntactically validates that `version` parses as a
 semver range and that `signer` matches the `did:jwk:` shape; the
 semantic resolve (does the constraint actually find a candidate?)
-happens client-side in `logos-package-downloader`.
+happens client-side in `logos-package-downloader`. Both use the same
+implementation (see [Semver](#semver)) — validation used to be a
+separate regex here, which accepted ranges the resolver could not
+actually evaluate.
+
+Note the pre-release rule: `"version": "^1.2.0"` will **not** resolve to
+`2.0.0-alpha` or `1.5.0-beta.1`. To depend on a pre-release, name one:
+`"^1.2.0-rc.1"`.
 
 ## Example Workflow
 

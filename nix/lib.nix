@@ -45,9 +45,17 @@ pkgs.stdenv.mkDerivation {
       cp build/lgx.lib $out/lib/ 2>/dev/null || true
     fi
     
-    # Copy headers
+    # Copy headers.
+    #
+    # Downstream repos (lgpm, lgpd, the package-manager UI) get the shared
+    # semver implementation from here. logos/semver.hpp includes
+    # <semver/semver.hpp>, so vendor that header in alongside it — otherwise
+    # every consumer would need its own cpp-semver input just to see it.
     cp ${src}/src/lgx.h $out/include/
-    
+    cp -r ${src}/include/logos $out/include/
+    mkdir -p $out/include/semver
+    cp ${common.cpp-semver}/include/semver/semver.hpp $out/include/semver/
+
     runHook postInstall
   '';
   

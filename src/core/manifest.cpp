@@ -1,6 +1,8 @@
 #include "manifest.h"
 #include "path_normalizer.h"
 
+#include "logos/semver.hpp"
+
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cctype>
@@ -13,68 +15,13 @@ namespace lgx {
 
 namespace {
 
-// Permissive syntactic check for an npm/Cargo-style semver range. The intent
-// is to catch obvious garbage at write time; the downloader does the
-// authoritative matching at resolve time.
+// Syntactic check for an npm/Cargo-style semver range.
 //
-// Accepted constructs (any combination separated by whitespace or `||`):
-//   *, x, X, latest
-//   1, 1.2, 1.2.3, 1.2.3-alpha.1, 1.2.3+build
-//   1.2.x, 1.X
-//   ^1.2, ~1.2.3
-//   =1.2.3, >1, >=1.2, <2, <=2.0.0
-//   1.2.x  (wildcards in any position)
-//   prefixes may be combined into "&&"-like ranges via whitespace.
+// Delegates to the shared implementation, which is the same code that later
+// evaluates the range in the downloader's resolver. It used to be a standalone
+// regex here, which accepted ranges the resolver could not actually evaluate.
 bool isValidSemverRange(const std::string& s) {
-    if (s.empty()) return false;
-    // One element (token) regex.
-    // Operators: ^ ~ = > >= < <= (optional)
-    // Body: digits/x/X/* with optional pre/build tags.
-    static const std::regex token(
-        R"(\s*(?:\^|~|>=|<=|=|>|<)?\s*)"
-        R"((?:\*|x|X|latest|)"
-        R"((?:0|[1-9][0-9]*|x|X|\*)(?:\.(?:0|[1-9][0-9]*|x|X|\*))?(?:\.(?:0|[1-9][0-9]*|x|X|\*))?)"
-        R"((?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)"
-        R"())"
-        R"(\s*)"
-    );
-    // Split on `||` (alternation), then on whitespace (conjunction). Every
-    // sub-token must match the token regex.
-    auto trim = [](std::string v) {
-        size_t a = v.find_first_not_of(" \t");
-        size_t b = v.find_last_not_of(" \t");
-        if (a == std::string::npos) return std::string();
-        return v.substr(a, b - a + 1);
-    };
-    auto split = [](const std::string& v, const std::string& sep) {
-        std::vector<std::string> out;
-        size_t pos = 0;
-        while (pos <= v.size()) {
-            size_t next = v.find(sep, pos);
-            if (next == std::string::npos) {
-                out.push_back(v.substr(pos));
-                break;
-            }
-            out.push_back(v.substr(pos, next - pos));
-            pos = next + sep.size();
-        }
-        return out;
-    };
-
-    for (const auto& alt : split(s, "||")) {
-        std::string a = trim(alt);
-        if (a.empty()) return false;
-        // Tokens within an alt are whitespace-separated.
-        std::istringstream iss(a);
-        std::string tok;
-        bool any = false;
-        while (iss >> tok) {
-            if (!std::regex_match(tok, token)) return false;
-            any = true;
-        }
-        if (!any) return false;
-    }
-    return true;
+    return logos::semver::valid_range(s);
 }
 
 // Cheap shape check for a did:jwk: identity. Full DID parsing happens
@@ -319,8 +266,18 @@ Manifest::ValidationResult Manifest::validate() const {
     
     if (version.empty()) {
         result.addError("'version' field is empty");
+    } else if (!logos::semver::valid(version)) {
+        // Must be a full SemVer 2.0.0 version (X.Y.Z with optional -prerelease
+        // / +build). Catching it here means `lgx verify` fails loudly at
+        // build/publish time. Otherwise a non-conforming version — a 4-part
+        // "0.1.2.3", a "v" prefix, a partial "1.0" — is unparseable to the
+        // comparators, so it sorts BELOW every valid version (never "latest")
+        // and only orders against other junk by raw byte comparison. Better to
+        // reject the package than to ship one that silently sorts wrong.
+        result.addError("'version' is not a valid SemVer 2.0.0 version: '" +
+                        version + "'");
     }
-    
+
     // Validate main entries
     for (const auto& [variant, path] : main) {
         // Check variant name is lowercase

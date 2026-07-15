@@ -25,20 +25,27 @@
           
           # Library package
           libPkg = import ./nix/lib.nix { inherit pkgs common src; };
-          
+
+          # Headers-only package (no library — see nix/headers.nix)
+          headersPkg = import ./nix/headers.nix { inherit pkgs common src; };
+
           # Combined package (binary + library + tests)
           allPkg = import ./nix/all.nix { inherit pkgs common src; };
         in
         {
           # lgx binary package
           lgx = bin;
-          
+
           # lgx shared library
           lib = libPkg;
-          
+
+          # lgx public headers, without the library. For consumers that need the
+          # shared semver implementation but must not link liblgx.
+          headers = headersPkg;
+
           # lgx all-in-one package (binary, library, and tests)
           all = allPkg;
-          
+
           # Default package
           default = allPkg;
         }

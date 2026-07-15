@@ -357,11 +357,47 @@ LGX_EXPORT void lgx_free_verify_result(lgx_verify_result_t result);
  */
 LGX_EXPORT const char* lgx_get_last_error(void);
 
+/* Semver
+ *
+ * The one semver implementation for the whole packaging stack, exposed on the C
+ * ABI so the non-C++ consumers reach the same code the C++ ones do. Precedence
+ * is SemVer 2.0.0 (pre-releases order per §11, build metadata ignored); ranges
+ * are the npm dialect the manifests already use. See include/logos/semver.hpp.
+ */
+
+/**
+ * Compare two versions by SemVer 2.0.0 precedence.
+ *
+ * @param a First version (e.g. "1.0.0-rc.2")
+ * @param b Second version (e.g. "1.0.0-rc.11")
+ * @return -1 if a < b, 0 if equal, 1 if a > b. An unparseable version sorts
+ *         below every valid one; NULL is treated as an empty string.
+ */
+LGX_EXPORT int lgx_semver_compare(const char* a, const char* b);
+
+/**
+ * Is this a valid SemVer 2.0.0 version string?
+ */
+LGX_EXPORT bool lgx_semver_valid(const char* version);
+
+/**
+ * Does `version` satisfy `range` (npm-style: ^ ~ x * || >= <= > < =)?
+ *
+ * A range never matches a pre-release unless the range itself names one at the
+ * same major.minor.patch — so "^1.0.0" does NOT match "2.0.0-alpha".
+ */
+LGX_EXPORT bool lgx_semver_satisfies(const char* version, const char* range);
+
+/**
+ * Is this a well-formed npm-style range? (Syntax only.)
+ */
+LGX_EXPORT bool lgx_semver_valid_range(const char* range);
+
 /* Version info */
 
 /**
  * Get the library version string.
- * 
+ *
  * @return Version string (e.g., "0.1.0")
  */
 LGX_EXPORT const char* lgx_version(void);
