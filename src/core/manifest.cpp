@@ -254,8 +254,18 @@ Manifest::ValidationResult Manifest::validate() const {
     
     if (version.empty()) {
         result.addError("'version' field is empty");
+    } else if (!logos::semver::valid(version)) {
+        // Must be a full SemVer 2.0.0 version (X.Y.Z with optional -prerelease
+        // / +build). Catching it here means `lgx verify` fails loudly at
+        // build/publish time. Otherwise a non-conforming version — a 4-part
+        // "0.1.2.3", a "v" prefix, a partial "1.0" — is unparseable to the
+        // comparators, so it sorts BELOW every valid version (never "latest")
+        // and only orders against other junk by raw byte comparison. Better to
+        // reject the package than to ship one that silently sorts wrong.
+        result.addError("'version' is not a valid SemVer 2.0.0 version: '" +
+                        version + "'");
     }
-    
+
     // Validate main entries
     for (const auto& [variant, path] : main) {
         // Check variant name is lowercase

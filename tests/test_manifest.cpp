@@ -268,9 +268,42 @@ TEST(ManifestTest, Validate_EmptyVersion) {
     m.manifestVersion = "0.1.0";
     m.name = "test";
     m.version = "";
-    
+
     auto result = m.validate();
     EXPECT_FALSE(result.valid);
+}
+
+// The package `version` must be a full SemVer 2.0.0 version. A non-conforming
+// version is unparseable to the comparators, so it sorts below every valid
+// version and only orders against other junk by byte comparison — rejecting it
+// here fails `lgx verify` loudly instead of shipping a package that sorts wrong.
+TEST(ManifestTest, Validate_NonSemverVersionIsRejected) {
+    for (const char* bad : {"0.1.2.3",   // four sections — the reported case
+                            "1.0",       // partial
+                            "v1.0.0",    // leading v
+                            "1.0.0-",    // empty pre-release
+                            "01.0.0",    // leading zero
+                            "banana"}) {
+        Manifest m;
+        m.manifestVersion = "0.1.0";
+        m.name = "test";
+        m.version = bad;
+        auto result = m.validate();
+        EXPECT_FALSE(result.valid) << "should reject version '" << bad << "'";
+    }
+}
+
+TEST(ManifestTest, Validate_SemverVersionsAreAccepted) {
+    for (const char* good : {"1.0.0", "0.1.3", "10.20.30",
+                             "1.0.0-rc.1", "1.0.0-alpha.1+build.5"}) {
+        Manifest m;
+        m.manifestVersion = "0.1.0";
+        m.name = "test";
+        m.version = good;
+        auto result = m.validate();
+        EXPECT_TRUE(result.valid) << "should accept version '" << good
+                                  << "': " << (result.errors.empty() ? "" : result.errors[0]);
+    }
 }
 
 TEST(ManifestTest, Validate_InvalidMainPath) {
