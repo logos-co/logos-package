@@ -34,6 +34,7 @@ pkgs.stdenv.mkDerivation rec {
     description = "C++17 header-only SemVer 2.0.0 library";
     homepage = "https://github.com/z4kn4fein/cpp-semver";
     license = licenses.mit;
-    platforms = platforms.unix;
+    # Header-only, so there is nothing platform-specific to be wrong about.
+    platforms = platforms.unix ++ platforms.windows;
   };
 }

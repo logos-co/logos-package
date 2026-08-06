@@ -436,7 +436,17 @@ std::string Keyring::currentTimestamp() {
     auto now = std::chrono::system_clock::now();
     auto time = std::chrono::system_clock::to_time_t(now);
     std::tm tm{};
+    // gmtime_r is POSIX and absent from mingw-w64, which ships MSVC's
+    // gmtime_s instead. GCC helpfully suggests it -- but the two take their
+    // arguments in the OPPOSITE order:
+    //     struct tm *gmtime_r(const time_t *t,  struct tm *out);   // POSIX
+    //     errno_t    gmtime_s(struct tm  *out,  const time_t *t);  // MSVC
+    // so this is a swap, not a rename. Both are thread-safe, unlike gmtime.
+#ifdef _WIN32
+    if (gmtime_s(&tm, &time) != 0) return {};
+#else
     gmtime_r(&time, &tm);
+#endif
     std::ostringstream oss;
     oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
     return oss.str();
