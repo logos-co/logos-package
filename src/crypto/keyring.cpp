@@ -36,37 +36,51 @@ Keyring::Keyring(const std::filesystem::path& dir) : dir_(dir) {
     ensureDirectory(dir_);
 }
 
-std::filesystem::path Keyring::defaultDirectory() {
+namespace {
+
+// Root under which the "logos" config tree lives, or an empty path if it
+// cannot be determined (callers already treat empty as "no keyring").
+//
+// Windows has no XDG_CONFIG_HOME and no HOME, so the POSIX-only lookup this
+// replaces returned an EMPTY path in the normal Windows case -- silently
+// disabling the trust-key lookup, and hard-erroring with "Cannot determine
+// keyring directory" on the key-management commands. APPDATA is the direct
+// analogue of XDG_CONFIG_HOME (it is per-user roaming config); USERPROFILE
+// backs it up the way HOME does on POSIX.
+//
+// Factored out because both callers below need exactly the same rules and
+// previously carried two copies of them.
+std::filesystem::path configRoot() {
     namespace fs = std::filesystem;
 
-    const char* xdgConfig = std::getenv("XDG_CONFIG_HOME");
-    fs::path configDir;
-    if (xdgConfig && xdgConfig[0] != '\0') {
-        configDir = fs::path(xdgConfig);
-    } else {
-        const char* home = std::getenv("HOME");
-        if (!home) {
-            return fs::path{};
-        }
-        configDir = fs::path(home) / ".config";
-    }
+    auto env = [](const char* name) -> const char* {
+        const char* v = std::getenv(name);
+        return (v && v[0] != '\0') ? v : nullptr;
+    };
+
+#ifdef _WIN32
+    if (const char* appData = env("APPDATA")) return fs::path(appData);
+    if (const char* profile = env("USERPROFILE"))
+        return fs::path(profile) / "AppData" / "Roaming";
+    return fs::path{};
+#else
+    if (const char* xdgConfig = env("XDG_CONFIG_HOME")) return fs::path(xdgConfig);
+    if (const char* home = env("HOME")) return fs::path(home) / ".config";
+    return fs::path{};
+#endif
+}
+
+}  // namespace
+
+std::filesystem::path Keyring::defaultDirectory() {
+    const std::filesystem::path configDir = configRoot();
+    if (configDir.empty()) return {};
     return configDir / "logos" / "trusted-keys";
 }
 
 std::filesystem::path Keyring::defaultKeysDirectory() {
-    namespace fs = std::filesystem;
-
-    const char* xdgConfig = std::getenv("XDG_CONFIG_HOME");
-    fs::path configDir;
-    if (xdgConfig && xdgConfig[0] != '\0') {
-        configDir = fs::path(xdgConfig);
-    } else {
-        const char* home = std::getenv("HOME");
-        if (!home) {
-            return fs::path{};
-        }
-        configDir = fs::path(home) / ".config";
-    }
+    const std::filesystem::path configDir = configRoot();
+    if (configDir.empty()) return {};
     return configDir / "logos" / "keys";
 }
 
