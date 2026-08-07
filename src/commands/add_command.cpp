@@ -3,6 +3,9 @@
 #include "core/path_normalizer.h"
 
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <vector>
 
 namespace lgx {
 
@@ -34,6 +37,7 @@ int AddCommand::execute(const std::vector<std::string>& args) {
     
     std::string mainPath = getOption(opts, "main", "m");
     std::string viewPath = getOption(opts, "view");
+    std::string iconPath = getOption(opts, "icon");
     bool autoYes = hasFlag(opts, "yes", "y");
     
     // Check if package exists
@@ -67,7 +71,32 @@ int AddCommand::execute(const std::vector<std::string>& args) {
         }
         pkg.getManifest().view = viewPath;
     }
-    
+
+    // Apply --icon: stage the file at the canonical assets/ path and point the
+    // manifest at it. Variant-independent by design — one icon serves every
+    // platform build, so this is set on the package rather than per variant.
+    // Validation of the bytes (PNG, exactly 256x256) happens in
+    // Package::validateIconAsset() when the package is verified or signed.
+    if (!iconPath.empty()) {
+        if (!std::filesystem::exists(iconPath)) {
+            printError("Icon not found: " + iconPath);
+            return 1;
+        }
+        std::ifstream iconFile(iconPath, std::ios::binary);
+        if (!iconFile) {
+            printError("Cannot read icon: " + iconPath);
+            return 1;
+        }
+        std::vector<uint8_t> iconData(
+            (std::istreambuf_iterator<char>(iconFile)),
+            std::istreambuf_iterator<char>());
+        auto iconResult = pkg.setIcon(iconData);
+        if (!iconResult.success) {
+            printError("Failed to set icon: " + iconResult.error);
+            return 1;
+        }
+    }
+
     // Check if variant exists (replacement warning)
     bool variantExists = pkg.hasVariant(variantLc);
     

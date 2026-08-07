@@ -56,10 +56,25 @@ struct Dependency {
  */
 class Manifest {
 public:
-    // Current manifest version. Bumped to 0.3.0 to accommodate richer
-    // dependency entries (semver ranges + optional signer DID). 0.2.x
-    // manifests are still readable for backward compatibility.
-    static constexpr const char* CURRENT_VERSION = "0.3.0";
+    // Current manifest version. Bumped to 0.4.0 for the root-level assets/
+    // slot: `icon` now points at a variant-independent asset (assets/icon.png)
+    // that is exactly 256x256 PNG, so hosts can display it without unpacking
+    // a platform build. 0.2.x and 0.3.x manifests are still readable.
+    static constexpr const char* CURRENT_VERSION = "0.4.0";
+
+    // Canonical in-package icon location for 0.4.0+. The author's
+    // metadata.json path stays free-form; the bundler normalises to this.
+    static constexpr const char* ICON_PATH = "assets/icon.png";
+
+    // Required icon dimensions, enforced for 0.4.0+ packages whose type
+    // requires an icon. Exact, not a minimum — see plan.md §3.4.
+    static constexpr int ICON_SIZE_PX = 256;
+
+    // True when `version` is 0.4.0 or newer, i.e. the icon contract applies.
+    // 0.2.x/0.3.x packages predate it and are exempt (plan.md §3.7): `icon`
+    // was legal as "" back then, so applying the rule unconditionally would
+    // make every already-published package uninstallable.
+    static bool requiresIconContract(const std::string& version);
     
     /**
      * Validation result for manifest.

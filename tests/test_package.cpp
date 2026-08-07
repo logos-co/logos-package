@@ -8,6 +8,9 @@
 
 #include <filesystem>
 #include <fstream>
+#include <vector>
+
+#include "test_png.h"
 
 using namespace lgx;
 namespace fs = std::filesystem;
@@ -234,6 +237,8 @@ TEST_F(PackageTest, AddVariant_UiQmlDirectory_AllowsMissingMain) {
     ASSERT_TRUE(pkg.has_value());
     pkg->getManifest().type = "ui_qml";
     pkg->getManifest().view = "qml/Main.qml";
+    // 0.4.0 requires ui_qml packages to carry a conforming icon.
+    ASSERT_TRUE(pkg->setIcon(lgx_test::makePng()).success);
 
     fs::path testDir = tempDir / "dist";
     createTestDirectory(testDir, {
@@ -262,6 +267,8 @@ TEST_F(PackageTest, AddVariant_UiQmlDirectory_ClearsStaleMain) {
     ASSERT_TRUE(pkg.has_value());
     pkg->getManifest().type = "ui_qml";
     pkg->getManifest().view = "qml/Main.qml";
+    // 0.4.0 requires ui_qml packages to carry a conforming icon.
+    ASSERT_TRUE(pkg->setIcon(lgx_test::makePng()).success);
 
     fs::path firstDir = tempDir / "first";
     createTestDirectory(firstDir, {
@@ -276,6 +283,8 @@ TEST_F(PackageTest, AddVariant_UiQmlDirectory_ClearsStaleMain) {
     ASSERT_TRUE(pkg.has_value());
     pkg->getManifest().type = "ui_qml";
     pkg->getManifest().view = "qml/Main.qml";
+    // 0.4.0 requires ui_qml packages to carry a conforming icon.
+    ASSERT_TRUE(pkg->setIcon(lgx_test::makePng()).success);
 
     fs::path secondDir = tempDir / "second";
     createTestDirectory(secondDir, {
@@ -1309,4 +1318,280 @@ TEST_F(PackageTest, Verify_SignedPackage_ValidHashes) {
     auto result = Package::verify(pkgPath);
     EXPECT_TRUE(result.valid) << "Errors: " <<
         (result.errors.empty() ? "none" : result.errors[0]);
+}
+
+// =============================================================================
+// Icon Contract (manifest 0.4.0+) — plan.md §3.4, §3.7
+// =============================================================================
+
+TEST_F(PackageTest, Icon_ConformingIconValidates) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->getManifest().type = "ui_qml";
+    pkg->getManifest().view = "qml/Main.qml";
+    ASSERT_TRUE(pkg->setIcon(lgx_test::makePng()).success);
+
+    fs::path testDir = tempDir / "dist";
+    createTestDirectory(testDir, {{"qml/Main.qml", "import QtQuick\nItem {}"}});
+    ASSERT_TRUE(pkg->addVariant("linux-amd64", testDir).success);
+    ASSERT_TRUE(pkg->save(pkgPath).success);
+
+    auto result = Package::verify(pkgPath);
+    EXPECT_TRUE(result.valid) << "Errors: " <<
+        (result.errors.empty() ? "none" : result.errors[0]);
+}
+
+// The icon lands at the canonical root path, NOT inside a variant — that is
+// what makes it readable without unpacking a platform build.
+TEST_F(PackageTest, Icon_StoredAtCanonicalRootPath) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    ASSERT_TRUE(pkg->setIcon(lgx_test::makePng()).success);
+    ASSERT_TRUE(pkg->save(pkgPath).success);
+
+    pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    EXPECT_EQ(pkg->getManifest().icon, std::string("assets/icon.png"));
+
+    bool found = false;
+    for (const auto& e : pkg->getEntries())
+        if (e.path == "assets/icon.png" && !e.isDirectory) found = true;
+    EXPECT_TRUE(found) << "icon must live at assets/icon.png";
+}
+
+TEST_F(PackageTest, Icon_WrongDimensionsRejected) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->getManifest().type = "ui_qml";
+    pkg->getManifest().view = "qml/Main.qml";
+    ASSERT_TRUE(pkg->setIcon(lgx_test::makePng(512, 512)).success);
+
+    fs::path testDir = tempDir / "dist";
+    createTestDirectory(testDir, {{"qml/Main.qml", "import QtQuick\nItem {}"}});
+    ASSERT_TRUE(pkg->addVariant("linux-amd64", testDir).success);
+    pkg->save(pkgPath);
+
+    auto result = Package::verify(pkgPath);
+    EXPECT_FALSE(result.valid);
+    ASSERT_FALSE(result.errors.empty());
+    // The message must name the standard and both sizes, not just assert.
+    EXPECT_NE(result.errors[0].find("256x256"), std::string::npos);
+    EXPECT_NE(result.errors[0].find("512x512"), std::string::npos);
+}
+
+TEST_F(PackageTest, Icon_NonPngRejected) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->getManifest().type = "ui_qml";
+    pkg->getManifest().view = "qml/Main.qml";
+    std::vector<uint8_t> notPng(64, 0x41);  // "AAAA..."
+    ASSERT_TRUE(pkg->setIcon(notPng).success);
+
+    fs::path testDir = tempDir / "dist";
+    createTestDirectory(testDir, {{"qml/Main.qml", "import QtQuick\nItem {}"}});
+    ASSERT_TRUE(pkg->addVariant("linux-amd64", testDir).success);
+    pkg->save(pkgPath);
+
+    auto result = Package::verify(pkgPath);
+    EXPECT_FALSE(result.valid);
+    ASSERT_FALSE(result.errors.empty());
+    EXPECT_NE(result.errors[0].find("not a PNG"), std::string::npos);
+}
+
+TEST_F(PackageTest, Icon_MissingOnUiQmlRejected) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->getManifest().type = "ui_qml";
+    pkg->getManifest().view = "qml/Main.qml";
+
+    fs::path testDir = tempDir / "dist";
+    createTestDirectory(testDir, {{"qml/Main.qml", "import QtQuick\nItem {}"}});
+    ASSERT_TRUE(pkg->addVariant("linux-amd64", testDir).success);
+    pkg->save(pkgPath);
+
+    auto result = Package::verify(pkgPath);
+    EXPECT_FALSE(result.valid);
+}
+
+// Core modules appear in package lists but render no tile, so an icon stays
+// optional for them. Requiring one would turn a 12-module migration into a
+// 33-module one for no visual benefit.
+TEST_F(PackageTest, Icon_OptionalForCoreType) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->getManifest().type = "core";
+
+    fs::path testFile = tempDir / "mod.so";
+    createTestFile(testFile, "binary");
+    ASSERT_TRUE(pkg->addVariant("linux-amd64", testFile).success);
+    ASSERT_TRUE(pkg->save(pkgPath).success);
+
+    auto result = Package::verify(pkgPath);
+    EXPECT_TRUE(result.valid) << "Errors: " <<
+        (result.errors.empty() ? "none" : result.errors[0]);
+}
+
+// THE backward-compatibility regression. A 0.3.0 ui_qml package with icon:""
+// was legal and is published in the wild. Enforcing the 0.4.0 contract on it
+// would make the entire existing catalog fail verification and become
+// uninstallable. See plan.md §3.7.
+TEST_F(PackageTest, Icon_LegacyManifestExemptFromContract) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->getManifest().manifestVersion = "0.3.0";
+    pkg->getManifest().type = "ui_qml";
+    pkg->getManifest().view = "qml/Main.qml";
+    pkg->getManifest().icon = "";
+
+    fs::path testDir = tempDir / "dist";
+    createTestDirectory(testDir, {{"qml/Main.qml", "import QtQuick\nItem {}"}});
+    ASSERT_TRUE(pkg->addVariant("linux-amd64", testDir).success);
+    ASSERT_TRUE(pkg->save(pkgPath).success);
+
+    auto result = Package::verify(pkgPath);
+    EXPECT_TRUE(result.valid) << "0.3.0 package must remain valid. Errors: " <<
+        (result.errors.empty() ? "none" : result.errors[0]);
+}
+
+// Mutating the icon must change the Merkle root — assets/ is inside the tree,
+// which is what makes the icon signature-covered for free.
+TEST_F(PackageTest, Icon_ParticipatesInMerkleTree) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    ASSERT_TRUE(pkg->setIcon(lgx_test::makePng()).success);
+    ASSERT_TRUE(pkg->save(pkgPath).success);
+    pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    const std::string rootA = pkg->getManifest().hashes.count("root")
+                              ? pkg->getManifest().hashes.at("root") : "";
+    ASSERT_FALSE(rootA.empty());
+
+    ASSERT_TRUE(pkg->setIcon(lgx_test::makePng(256, 256)).success);
+    // Same dimensions but different pixel payload would be identical here, so
+    // use a differently-sized image to guarantee different bytes.
+    ASSERT_TRUE(pkg->setIcon(lgx_test::makePng(128, 128)).success);
+    ASSERT_TRUE(pkg->save(pkgPath).success);
+    pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    const std::string rootB = pkg->getManifest().hashes.count("root")
+                              ? pkg->getManifest().hashes.at("root") : "";
+
+    EXPECT_NE(rootA, rootB) << "assets/ must be covered by the Merkle tree";
+}
+
+// The gap that let the icon regression ship: every existing test checked the
+// archive's CONTENTS, none checked what lands on disk after extraction. The
+// manifest documents `icon` as relative to the installed package root, so the
+// contract is "extract, then resolve manifest.icon" — assert exactly that.
+TEST_F(PackageTest, Icon_ExtractedToInstalledPackageRoot) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->getManifest().type = "ui_qml";
+    pkg->getManifest().view = "qml/Main.qml";
+    ASSERT_TRUE(pkg->setIcon(lgx_test::makePng()).success);
+
+    fs::path testDir = tempDir / "dist";
+    createTestDirectory(testDir, {{"qml/Main.qml", "import QtQuick\nItem {}"}});
+    ASSERT_TRUE(pkg->addVariant("linux-amd64", testDir).success);
+    ASSERT_TRUE(pkg->save(pkgPath).success);
+
+    fs::path out = tempDir / "installed";
+    auto loaded = Package::load(pkgPath);
+    ASSERT_TRUE(loaded.has_value());
+    ASSERT_TRUE(loaded->extractVariant("linux-amd64", out).success);
+
+    // This is the exact join UIPluginManager::pluginIconUrl() performs.
+    const fs::path installDir = out / "linux-amd64";
+    const fs::path resolved   = installDir / loaded->getManifest().icon;
+    EXPECT_TRUE(fs::exists(resolved))
+        << "manifest icon '" << loaded->getManifest().icon
+        << "' must resolve under the installed package root";
+
+    // Variant payload still lands where it always did.
+    EXPECT_TRUE(fs::exists(installDir / "qml" / "Main.qml"));
+
+    // And the extracted icon is byte-identical to what was packaged.
+    std::ifstream f(resolved, std::ios::binary);
+    std::vector<uint8_t> onDisk((std::istreambuf_iterator<char>(f)),
+                                 std::istreambuf_iterator<char>());
+    EXPECT_EQ(onDisk, lgx_test::makePng());
+}
+
+// Assets are variant-independent: extracting a different variant must still
+// produce the icon, or a darwin install would lose what a linux install kept.
+TEST_F(PackageTest, Icon_ExtractedForEveryVariant) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    ASSERT_TRUE(pkg->setIcon(lgx_test::makePng()).success);
+
+    fs::path a = tempDir / "a"; createTestFile(a / "mod.so", "x");
+    fs::path b = tempDir / "b"; createTestFile(b / "mod.dylib", "y");
+    ASSERT_TRUE(pkg->addVariant("linux-amd64", a, "mod.so").success);
+    ASSERT_TRUE(pkg->addVariant("darwin-arm64", b, "mod.dylib").success);
+    ASSERT_TRUE(pkg->save(pkgPath).success);
+
+    auto loaded = Package::load(pkgPath);
+    ASSERT_TRUE(loaded.has_value());
+    for (const std::string v : {"linux-amd64", "darwin-arm64"}) {
+        fs::path out = tempDir / ("out-" + v);
+        ASSERT_TRUE(loaded->extractVariant(v, out).success) << v;
+        EXPECT_TRUE(fs::exists(out / v / "assets" / "icon.png"))
+            << "variant " << v << " lost the root asset";
+    }
+}
+
+// Review fix: a 0.4.0 package could previously pass with `icon` pointing
+// anywhere, contradicting the canonical-path contract that hosts and the
+// release tool both rely on.
+TEST_F(PackageTest, Icon_NonCanonicalPathRejected) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    Package::create(pkgPath, "testpkg");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->getManifest().type = "ui_qml";
+    pkg->getManifest().view = "qml/Main.qml";
+    ASSERT_TRUE(pkg->setIcon(lgx_test::makePng()).success);
+    // Point the manifest somewhere else under assets/ — file still exists.
+    pkg->getManifest().icon = "assets/elsewhere.png";
+
+    fs::path testDir = tempDir / "dist";
+    createTestDirectory(testDir, {{"qml/Main.qml", "import QtQuick\nItem {}"}});
+    ASSERT_TRUE(pkg->addVariant("linux-amd64", testDir).success);
+    pkg->save(pkgPath);
+
+    auto result = Package::verify(pkgPath);
+    EXPECT_FALSE(result.valid);
+    ASSERT_FALSE(result.errors.empty());
+    EXPECT_NE(result.errors[0].find("assets/icon.png"), std::string::npos);
 }

@@ -10,10 +10,121 @@ namespace lgx {
 
 thread_local std::string Package::lastError_;
 
+namespace {
+
+// PNG header layout is fixed-offset, so dimensions come out of the first 26
+// bytes with no image library: 8-byte signature, 4-byte IHDR length, 4-byte
+// "IHDR" tag, then width and height as big-endian uint32.
+//
+// This validates the *declared* dimensions only. It is deliberately not a
+// defence against a malicious payload — a PNG can claim 256x256 and carry an
+// enormous IDAT. Byte-size ceilings and decoder allocation limits belong at
+// the fetch/decode boundary (plan.md §3.2.2), not here.
+struct PngHeader {
+    bool valid = false;
+    uint32_t width = 0;
+    uint32_t height = 0;
+};
+
+PngHeader readPngHeader(const std::vector<uint8_t>& data) {
+    static const uint8_t kSignature[8] =
+        {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+
+    PngHeader h;
+    if (data.size() < 26) return h;
+    if (!std::equal(std::begin(kSignature), std::end(kSignature), data.begin()))
+        return h;
+    if (data[12] != 'I' || data[13] != 'H' ||
+        data[14] != 'D' || data[15] != 'R') return h;
+
+    auto be32 = [&data](size_t off) {
+        return (static_cast<uint32_t>(data[off])     << 24)
+             | (static_cast<uint32_t>(data[off + 1]) << 16)
+             | (static_cast<uint32_t>(data[off + 2]) << 8)
+             |  static_cast<uint32_t>(data[off + 3]);
+    };
+
+    h.width  = be32(16);
+    h.height = be32(20);
+    h.valid  = true;
+    return h;
+}
+
+} // namespace
+
+void Package::validateIconAsset(VerifyResult& result) const {
+    // Version gate. 0.2.x/0.3.x packages predate the assets/ slot and were
+    // free to carry `icon: ""`; enforcing the contract on them would render
+    // the entire already-published catalog uninstallable. See plan.md §3.7.
+    if (!Manifest::requiresIconContract(manifest_.manifestVersion)) return;
+
+    // Icons are required for UI packages, which are the ones that render a
+    // tile. Core modules appear in package lists but have no launcher or
+    // sidebar presence, so an icon stays optional for them.
+    const bool iconRequired = (manifest_.type == "ui_qml");
+
+    if (manifest_.icon.empty()) {
+        if (iconRequired) {
+            result.valid = false;
+            result.errors.push_back(
+                std::string("Missing 'icon': ") + Manifest::ICON_PATH +
+                " is required for type '" + manifest_.type + "' packages");
+        }
+        return;
+    }
+
+    // The canonical location is part of the contract, not a convention: a
+    // host resolves <installDir>/assets/icon.png without consulting the
+    // manifest, and the release tool globs for it. Allowing `icon` to point
+    // anywhere would make both unpredictable.
+    if (manifest_.icon != Manifest::ICON_PATH) {
+        result.valid = false;
+        result.errors.push_back(
+            std::string("Manifest 'icon' must be '") + Manifest::ICON_PATH +
+            "' at manifestVersion 0.4.0+, got '" + manifest_.icon + "'");
+        return;
+    }
+
+    const TarEntry* iconEntry = nullptr;
+    for (const auto& entry : entries_) {
+        if (entry.path == manifest_.icon && !entry.isDirectory) {
+            iconEntry = &entry;
+            break;
+        }
+    }
+
+    if (!iconEntry) {
+        result.valid = false;
+        result.errors.push_back(
+            "Manifest 'icon' points at '" + manifest_.icon +
+            "' which is not present in the package");
+        return;
+    }
+
+    const PngHeader header = readPngHeader(iconEntry->data);
+    if (!header.valid) {
+        result.valid = false;
+        result.errors.push_back(
+            "Icon '" + manifest_.icon + "' does not match the Logos icon "
+            "standard: expected PNG, exactly 256x256; actual: not a PNG");
+        return;
+    }
+
+    const uint32_t want = static_cast<uint32_t>(Manifest::ICON_SIZE_PX);
+    if (header.width != want || header.height != want) {
+        result.valid = false;
+        result.errors.push_back(
+            "Icon '" + manifest_.icon + "' does not match the Logos icon "
+            "standard: expected PNG, exactly 256x256; actual: PNG, " +
+            std::to_string(header.width) + "x" + std::to_string(header.height));
+    }
+}
+
 const std::set<std::string> Package::ALLOWED_ROOT_ENTRIES = {
     "manifest.json",
     "manifest.sig",
     "variants",
+    "assets",
     "docs",
     "licenses"
 };
@@ -245,6 +356,8 @@ Package::VerifyResult Package::validatePackage() const {
         result.valid = false;
         result.errors.push_back("Missing variants/ directory");
     }
+
+    validateIconAsset(result);
 
     // Validate completeness (variants <-> main mapping)
     auto completenessResult = manifest_.validateCompleteness(foundVariants);
@@ -656,8 +769,20 @@ Package::Result Package::extractVariant(
 
     std::string prefix = "variants/" + variantLc + "/";
 
+    // Root-level `assets/` is variant-independent and must land in the SAME
+    // output directory as the variant contents, because the manifest's `icon`
+    // is documented as relative to the installed package root. Extracting
+    // only `variants/<v>/` left `assets/icon.png` on the floor, so every
+    // installed 0.4.0 package resolved its icon to a missing file and fell
+    // back to the monogram — a regression against 0.3.x, where the icon lived
+    // inside the variant and therefore did extract.
+    const std::string assetsPrefix = "assets/";
+
     for (const auto& entry : entries_) {
-        if (entry.path.substr(0, prefix.length()) != prefix) {
+        const bool inVariant = entry.path.compare(0, prefix.length(), prefix) == 0;
+        const bool inAssets =
+            entry.path.compare(0, assetsPrefix.length(), assetsPrefix) == 0;
+        if (!inVariant && !inAssets) {
             continue;
         }
 
@@ -673,7 +798,10 @@ Package::Result Package::extractVariant(
                                 entry.path + "': " + pathValidation.error);
         }
 
-        std::string relativePath = entry.path.substr(prefix.length());
+        // Variant entries are rebased to the variant root; asset entries keep
+        // their `assets/...` path so the installed layout matches the manifest.
+        std::string relativePath =
+            inVariant ? entry.path.substr(prefix.length()) : entry.path;
         if (relativePath.empty()) {
             continue;
         }
@@ -849,6 +977,39 @@ Package::SignatureInfo Package::verifySignature() const {
 
 void Package::clearSignature() {
     manifestSig_ = std::nullopt;
+}
+
+Package::Result Package::setIcon(const std::vector<uint8_t>& pngData) {
+    if (pngData.empty()) {
+        return Result::fail("Icon data is empty");
+    }
+
+    const std::string iconPath = Manifest::ICON_PATH;
+
+    // Replace any existing entry at the canonical path.
+    entries_.erase(
+        std::remove_if(entries_.begin(), entries_.end(),
+                       [&iconPath](const TarEntry& e) {
+                           return e.path == iconPath;
+                       }),
+        entries_.end());
+
+    TarEntry iconEntry;
+    iconEntry.path = iconPath;
+    iconEntry.data = pngData;
+    iconEntry.isDirectory = false;
+    entries_.push_back(std::move(iconEntry));
+
+    manifest_.icon = iconPath;
+
+    // Invalidate signature and recompute hashes (content changed)
+    clearSignature();
+    auto hashResult = recomputeHashes();
+    if (!hashResult.success) {
+        return hashResult;
+    }
+
+    return Result::ok();
 }
 
 Package::Result Package::recomputeHashes() {
