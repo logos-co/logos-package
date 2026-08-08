@@ -721,7 +721,29 @@ Package::Result Package::extractVariant(
             file.close();
 
             if (entry.mode != 0) {
-                fs::permissions(fullPath, static_cast<fs::perms>(entry.mode & 0777), ec);
+                // Honour the archived mode, but NEVER extract a file the
+                // extracting user cannot delete.
+                //
+                // A .lgx built by nix-bundle-lgx carries store modes, and the
+                // Nix store is 0444, so payload files can arrive read-only.
+                // std::filesystem maps a mode with no write bit to
+                // FILE_ATTRIBUTE_READONLY on Windows, and Windows refuses to
+                // DELETE such a file -- POSIX consults only the parent
+                // directory's write bit, which is why this is invisible
+                // everywhere else. The consequence was severe and remote from
+                // here: the package manager's temp-directory cleanup threw an
+                // uncaught filesystem_error AFTER a successful install, so the
+                // install reply was never sent and the UI reported failure for
+                // a package that had installed perfectly; uninstall and upgrade
+                // failed the same way with "Access is denied".
+                //
+                // The producer no longer ships read-only icons and the consumer
+                // no longer dies on cleanup, but this is the mechanism itself,
+                // and it protects every OTHER consumer of lgx_extract -- plus
+                // the packages already published with the bit set.
+                auto mode = static_cast<fs::perms>(entry.mode & 0777);
+                mode |= fs::perms::owner_write;
+                fs::permissions(fullPath, mode, ec);
                 if (ec) {
                     return Result::fail("Failed to set permissions on: " + fullPath.string() + " - " + ec.message());
                 }
