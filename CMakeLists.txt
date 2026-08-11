@@ -180,6 +180,18 @@ add_executable(lgx
 target_link_libraries(lgx PRIVATE lgx_core)
 
 # Installation
+# On Windows, BOTH the lgx executable and lgx_shared (which carries
+# OUTPUT_NAME "lgx") generate an import library called liblgx.dll.a, and both
+# install it to lib/. Whichever install rule runs last wins, so consumers got
+# either the real 22 KB DLL import library or the 892-byte one belonging to
+# lgx.exe -- at random. When the executable's won, every consumer failed to
+# link with "undefined reference to `__imp_lgx_*'" while lgx itself built and
+# ran perfectly. Renaming the executable's archive removes the collision.
+# Harmless elsewhere: no other platform generates an import library at all.
+if(WIN32)
+    set_target_properties(lgx PROPERTIES ARCHIVE_OUTPUT_NAME "lgx_exe")
+endif()
+
 install(TARGETS lgx RUNTIME DESTINATION bin)
 install(TARGETS lgx_core ARCHIVE DESTINATION lib)
 

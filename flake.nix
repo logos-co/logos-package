@@ -12,9 +12,19 @@
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
         pkgs = import nixpkgs { inherit system; };
       });
+
+      # Adds the "x86_64-windows" pseudo-system on top of the native ones. A
+      # cross derivation's `system` attribute is its BUILD platform, so
+      # `packages.x86_64-windows.*` evaluates anywhere but realises on Linux.
+      #
+      # PACKAGES only. `checks` stays native: ctest cannot execute PE binaries
+      # on the Linux build host, so a Windows "check" would assert nothing. And
+      # a cross devShell would hand you a mingw compiler with no way to run what
+      # it produces.
+      forAllTargets = logos-nix.lib.forAllTargets;
     in
     {
-      packages = forAllSystems ({ pkgs }: 
+      packages = forAllTargets ({ pkgs, ... }:
         let
           # Common configuration
           common = import ./nix/default.nix { inherit pkgs; };

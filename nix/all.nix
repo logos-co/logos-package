@@ -6,7 +6,7 @@ pkgs.stdenv.mkDerivation {
   version = common.version;
   
   inherit src;
-  inherit (common) nativeBuildInputs buildInputs;
+  inherit (common) nativeBuildInputs buildInputs cmakeFlags;
   
   configurePhase = ''
     runHook preConfigure
@@ -15,9 +15,10 @@ pkgs.stdenv.mkDerivation {
       -GNinja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
-      -DLGX_BUILD_TESTS=ON \
-      -DLGX_BUILD_SHARED=ON
-    
+      -DLGX_BUILD_TESTS=${if common.isWindows then "OFF" else "ON"} \
+      -DLGX_BUILD_SHARED=ON \
+      $cmakeFlags "''${cmakeFlagsArray[@]}"
+
     runHook postConfigure
   '';
   
@@ -39,14 +40,24 @@ pkgs.stdenv.mkDerivation {
     
     # Install shared library (not covered by cmake install)
     mkdir -p $out/lib
-    if [ -f build/liblgx.dylib ]; then
-      cp build/liblgx.dylib $out/lib/
-    elif [ -f build/liblgx.so ]; then
-      cp build/liblgx.so $out/lib/
-    elif [ -f build/lgx.dll ]; then
-      cp build/lgx.dll $out/lib/
-      cp build/lgx.lib $out/lib/ 2>/dev/null || true
+    # CMake names a MinGW shared library liblgx.dll with an import library
+    # liblgx.dll.a -- NOT the MSVC lgx.dll/lgx.lib pair this used to look for.
+    # That mattered more than it looks: the old if/elif chain had no else, so an
+    # unmatched name installed an EMPTY $out/lib and the build still succeeded.
+    # Glob every spelling, and fail loudly rather than shipping nothing.
+    shopt -s nullglob
+    # EVERY entry must contain a wildcard: nullglob only removes patterns that
+    # fail to match, and a literal path with no wildcard is left in the array
+    # verbatim -- which is what made the first attempt at this die in `cp`
+    # rather than in the intended error branch below.
+    libs=(build/liblgx*.dylib build/liblgx*.so build/liblgx*.dll build/lgx*.dll \
+          build/liblgx*.dll.a build/lgx*.lib)
+    if [ ''${#libs[@]} -eq 0 ]; then
+      echo "ERROR: no lgx shared library found in build/" >&2
+      ls -la build >&2
+      exit 1
     fi
+    cp "''${libs[@]}" $out/lib/
     
     # Install headers. See nix/lib.nix — logos/semver.hpp is the shared semver
     # implementation and needs the cpp-semver header vendored beside it so a
@@ -60,8 +71,12 @@ pkgs.stdenv.mkDerivation {
     runHook postInstall
   '';
   
-  # Run tests during build to ensure they pass
-  doCheck = true;
+  # Run tests during build to ensure they pass.
+  #
+  # Not under cross: ctest would have to execute PE binaries on the Linux build
+  # host. The Windows test story is a native run on a real machine (or wine),
+  # not a build-time check -- see the verification ladder.
+  doCheck = !common.isWindows;
   checkPhase = ''
     runHook preCheck
     

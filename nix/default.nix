@@ -3,12 +3,17 @@
 
 let
   cpp-semver = import ./cpp-semver.nix { inherit pkgs; };
+
+  # gtest is dropped and the test targets switched off when cross-compiling:
+  # gtest_discover_tests RUNS the freshly linked test binary at build time to
+  # enumerate cases, and a PE cannot execute on the Linux build host.
+  isWindows = pkgs.stdenv.hostPlatform.isWindows;
 in
 {
   pname = "lgx";
   version = "0.1.0";
 
-  inherit cpp-semver;
+  inherit cpp-semver isWindows;
 
   # Common native build inputs
   nativeBuildInputs = [
@@ -23,9 +28,9 @@ in
     pkgs.icu
     pkgs.nlohmann_json
     pkgs.libsodium
-    pkgs.gtest
     cpp-semver
-  ];
+  ]
+  ++ pkgs.lib.optional (!isWindows) pkgs.gtest;
   
   # Common CMake flags
   cmakeFlags = [ 
@@ -35,6 +40,6 @@ in
   # Metadata
   meta = with pkgs.lib; {
     description = "lgx - Logos Package Manager CLI";
-    platforms = platforms.unix;
+    platforms = platforms.unix ++ platforms.windows;
   };
 }
