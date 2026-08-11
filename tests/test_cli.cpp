@@ -3,6 +3,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+
+#include "test_png.h"
 #include <sstream>
 
 namespace fs = std::filesystem;
@@ -329,9 +331,14 @@ TEST_F(CLITest, AddCommand_UiQmlDirectoryWithoutMain) {
     auto saveResult = pkgOpt->save(pkgPath);
     ASSERT_TRUE(saveResult.success);
 
+    // 0.4.0 requires ui_qml packages to carry a conforming icon.
+    const std::string iconPath =
+        lgx_test::writePng((tempDir / "icon.png").string());
+
     std::string output;
     int exitCode = runLgx(
-        "add " + pkgPath.string() + " -v darwin-arm64 -f " + testDir.string() + " -y",
+        "add " + pkgPath.string() + " -v darwin-arm64 -f " + testDir.string() +
+        " --icon " + iconPath + " -y",
         &output
     );
 
@@ -356,10 +363,14 @@ TEST_F(CLITest, AddCommand_UiQmlDirectoryWithViewFlag) {
     auto saveResult = pkgOpt->save(pkgPath);
     ASSERT_TRUE(saveResult.success);
 
+    // 0.4.0 requires ui_qml packages to carry a conforming icon.
+    const std::string iconPath =
+        lgx_test::writePng((tempDir / "icon.png").string());
+
     std::string output;
     int exitCode = runLgx(
         "add " + pkgPath.string() + " -v darwin-arm64 -f " + testDir.string()
-            + " --view qml/Main.qml -y",
+            + " --view qml/Main.qml --icon " + iconPath + " -y",
         &output
     );
 
@@ -388,9 +399,14 @@ TEST_F(CLITest, AddCommand_UiQmlDirectoryWithoutView) {
     auto saveResult = pkgOpt->save(pkgPath);
     ASSERT_TRUE(saveResult.success);
 
+    // 0.4.0 requires ui_qml packages to carry a conforming icon.
+    const std::string iconPath =
+        lgx_test::writePng((tempDir / "icon.png").string());
+
     std::string output;
     int exitCode = runLgx(
-        "add " + pkgPath.string() + " -v darwin-arm64 -f " + testDir.string() + " -y",
+        "add " + pkgPath.string() + " -v darwin-arm64 -f " + testDir.string() +
+        " --icon " + iconPath + " -y",
         &output
     );
 

@@ -34,6 +34,8 @@ An LGX package (`.lgx` file) is a gzip-compressed tar archive with the following
 package.lgx (tar.gz)
 ├── manifest.json          # Required - package metadata
 ├── manifest.sig           # Optional - Ed25519 signature with DID identity
+├── assets/                # Optional - variant-independent package assets
+│   └── icon.png           #   Package icon: PNG, exactly 256x256
 ├── variants/              # Required - contains variant directories
 │   ├── <variant-1>/       # Variant directory (lowercase name)
 │   │   └── ...            # Variant contents
@@ -46,25 +48,25 @@ package.lgx (tar.gz)
 ```
 
 **Root Entry Constraints:**
-- Only `manifest.json`, `manifest.cose`, `variants/`, `docs/`, and `licenses/` are permitted at root
+- Only `manifest.json`, `manifest.sig`, `assets/`, `variants/`, `docs/`, and `licenses/` are permitted at root
 - Any other root entries cause validation failure
 - Files directly under `variants/` are forbidden (only directories allowed)
 - This strict structure keeps packages easy to validate and reduces ambiguity
 
 ### Manifest Schema
 
-The current manifest schema is `0.3.0`. It is a UTF-8 encoded JSON file with the following required fields:
+The current manifest schema is `0.4.0`. It is a UTF-8 encoded JSON file with the following required fields:
 
 ```json
 {
-  "manifestVersion": "0.3.0",
+  "manifestVersion": "0.4.0",
   "name": "package-name",
   "version": "1.2.3",
   "description": "Package description",
   "author": "Author Name",
   "type": "library",
   "category": "crypto",
-  "icon": "icon.png",
+  "icon": "assets/icon.png",
   "dependencies": [
     "simple-dep",
     {"name": "ranged-dep", "version": "^1.2.0"},
@@ -88,7 +90,7 @@ The current manifest schema is `0.3.0`. It is a UTF-8 encoded JSON file with the
 | `author` | string | Author/maintainer name | Human metadata |
 | `type` | string | Package type classification | Classification |
 | `category` | string | Package category | Classification |
-| `icon` | string | Relative path to icon file bundled in the package | Display/branding |
+| `icon` | string | Relative path to the icon bundled in the package. At `0.4.0`+ this is `assets/icon.png` — see *Icon contract* below | Display/branding |
 | `dependencies` | array | List of dependency entries — see *Dependency entries* below | Runtime needs |
 | `main` | object | Map of variant name → relative path to entry point (e.g ) `"linux-amd64": "path/to/main.so"` means `linux-amd64/path/to/main.so` | Entry point resolution |
 | `display_name` | string | *Optional.* Human-readable label shown by UI consumers (Package Manager, App Manager) and CLI tools (`lm metadata`, `lgx manifest`). Falls back to `name` when absent. | Display/branding |
@@ -110,6 +112,48 @@ Each element of the `dependencies` array is one of:
 #### Schema version compatibility
 
 Tooling reads both `manifestVersion: "0.2.x"` and `manifestVersion: "0.3.x"`. Packages produced by `lgx create` use `0.3.0`. A 0.2.0 manifest with plain-string dependencies round-trips unchanged through tooling — strings are emitted as strings, object-form entries are emitted as objects. Bumping the major version (1.x.x) is reserved for future breaking changes.
+
+### Icon Contract
+
+At `manifestVersion` `0.4.0`+, `icon` points at a **root-level, variant-independent
+asset**: `assets/icon.png`.
+
+**Requirements**
+
+| Rule | Value |
+|------|-------|
+| Format | PNG |
+| Dimensions | **exactly** 256x256 — not a minimum |
+| Location | `assets/icon.png` (canonical; set by `lgx add --icon`) |
+| Required for | `type == "ui_qml"` |
+| Optional for | every other type, including `core` |
+
+**Why root-level rather than per-variant.** One copy instead of one per
+platform, and a host can read the icon without choosing or unpacking a
+platform build — which is what lets a registry extract it at publish time and
+serve it to clients that have not downloaded the package. `assets/` is inside
+the Merkle tree, so the icon is authenticated by `manifest.sig` for free.
+
+**Why exactly 256x256.** The artifact stays byte-predictable: the icon in
+`assets/` is the author's file unmodified, so the content hash is reproducible
+from source without depending on an image library's resampling behaviour. It
+also keeps the packaging step free of an image-processing dependency —
+dimension validation is a fixed-offset PNG `IHDR` read.
+
+**Why `ui_qml` only.** UI packages render a tile in the App Manager, sidebar
+and launcher. Core modules appear in package lists but have no such surface,
+so requiring artwork from them would be cost without benefit.
+
+**Validation timing.** `lgx create` and `lgx add` are construction steps and do
+not enforce the contract — a package may be assembled in any order. Enforcement
+happens at `lgx verify`, `lgx sign` and `lgpm install`, i.e. wherever a package
+is asserted to be complete.
+
+**Backward compatibility.** Manifests below `0.4.0` are **exempt**. `icon: ""`
+was legal at `0.3.0` (it is what `lgx create` defaulted to), so applying the
+rule unconditionally would make every already-published package fail
+verification and become uninstallable. Tooling reads `0.2.x`, `0.3.x` and
+`0.4.x`; only `0.4.0`+ carries the icon contract.
 
 ### `ui_qml` Contract
 

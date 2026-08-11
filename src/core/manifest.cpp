@@ -412,10 +412,32 @@ bool Manifest::isVersionSupported(const std::string& version) {
     std::string major = version.substr(0, dotPos);
 
     // Currently only major version 0 is supported. Within 0.x we accept
-    // both 0.2.* (legacy plain-string dependencies) and 0.3.* (richer
-    // dependencies with optional version range + signer DID); see the
-    // Dependency parsing in fromJson() for the compatibility shim.
+    // 0.2.* (legacy plain-string dependencies), 0.3.* (richer dependencies
+    // with optional version range + signer DID) and 0.4.* (root-level
+    // assets/ slot); see the Dependency parsing in fromJson() for the
+    // compatibility shim and requiresIconContract() for the icon gate.
     return major == "0";
+}
+
+bool Manifest::requiresIconContract(const std::string& version) {
+    // Parse "<major>.<minor>." — anything below 0.4 predates assets/.
+    const size_t firstDot = version.find('.');
+    if (firstDot == std::string::npos) return false;
+    const size_t secondDot = version.find('.', firstDot + 1);
+
+    const std::string majorStr = version.substr(0, firstDot);
+    const std::string minorStr = secondDot == std::string::npos
+        ? version.substr(firstDot + 1)
+        : version.substr(firstDot + 1, secondDot - firstDot - 1);
+
+    try {
+        const int major = std::stoi(majorStr);
+        const int minor = std::stoi(minorStr);
+        if (major > 0) return true;          // 1.x and beyond
+        return major == 0 && minor >= 4;     // 0.4.0+
+    } catch (const std::exception&) {
+        return false;                        // unparseable → treat as legacy
+    }
 }
 
 Manifest::ValidationResult Manifest::compareMetadata(const Manifest& other) const {

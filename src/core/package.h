@@ -84,6 +84,22 @@ public:
     static VerifyResult verify(const std::filesystem::path& lgxPath);
     
     /**
+     * Set (or replace) the package icon.
+     *
+     * Writes the bytes to the canonical assets/icon.png entry and points the
+     * manifest's `icon` field at it. The icon is variant-independent: one
+     * copy serves every platform build, and a host can read it without
+     * choosing or unpacking a variant.
+     *
+     * Byte validation (PNG, exactly 256x256) is deliberately NOT done here —
+     * it happens in validateIconAsset() at verify/sign time, so a package can
+     * be assembled in any order.
+     *
+     * Invalidates any existing signature and recomputes content hashes.
+     */
+    Result setIcon(const std::vector<uint8_t>& pngData);
+
+    /**
      * Add files to a variant.
      * If the variant exists, it is completely replaced.
      * 
@@ -232,6 +248,16 @@ private:
     
     static thread_local std::string lastError_;
     
+    /**
+     * Validate the packaged icon asset against the Logos icon standard
+     * (PNG, exactly 256x256, at the manifest's `icon` path).
+     *
+     * No-op for manifests older than 0.4.0 — they predate the assets/ slot
+     * and legitimately carry `icon: ""`, so enforcing would break every
+     * already-published package. See Manifest::requiresIconContract().
+     */
+    void validateIconAsset(VerifyResult& result) const;
+
     /**
      * Rebuild tar entries, ensuring manifest is included.
      */
