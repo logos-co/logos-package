@@ -1,0 +1,37 @@
+name: Windows
+
+# The entire per-repo cost of Windows CI. Everything else -- the Nix install
+# pinning (this repo's ci.yml still uses install-nix-action@v27, i.e. Nix 2.22,
+# which is below the 2.26 floor where --override-input keeps the overridden
+# input's own lock), the binary cache (this repo pushes to none today, so a
+# naive Windows job here would rebuild mingw icu4c on every single run), the
+# target-existence guard, the cold-cache refusal, the PE-format and
+# import-closure gates, the artifact hand-off and its round-trip check, and the
+# real-Windows execution -- lives once in logos-co/logos-nix.
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  windows:
+    uses: logos-co/logos-nix/.github/workflows/windows-ci.yml@v1
+    secrets: inherit
+    with:
+      targets: lgx
+      # Paths are relative to the staged tree ROOT, which holds one directory
+      # per target -- so they start with `lgx/`. There is no `stage/bin`:
+      # verified against this repo's real cross-built output, where `stage/`
+      # contains exactly one entry, `lgx/`.
+      #
+      # Every command here prints on success (verified on a Windows 11 box:
+      # --help 988 B, create "Created package: smoke.lgx", verify "Package
+      # structure is valid"), so none of them needs `run -q`.
+      smoke: |
+        run lgx/bin/lgx.exe --help | tee help.txt
+        grep -qi usage help.txt
+        run lgx/bin/lgx.exe create smoke
+        test -s smoke.lgx
+        run lgx/bin/lgx.exe verify smoke.lgx
