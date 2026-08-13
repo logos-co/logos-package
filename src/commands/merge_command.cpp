@@ -143,6 +143,26 @@ int MergeCommand::execute(const std::vector<std::string>& args) {
     mergedManifest.view = refManifest.view;
     mergedManifest.dependencies = refManifest.dependencies;
 
+    // Lift the root-level icon from the reference package. At
+    // manifestVersion 0.4.0+ the icon is variant-independent and lives once
+    // at package root (assets/icon.png), so it does not travel through the
+    // per-variant loop below. Older manifests (0.3.x) carry the icon inside
+    // each variant and reach the merged package via addVariant(), so
+    // silently skip when no root entry matches.
+    if (!refManifest.icon.empty()) {
+        for (const auto& entry : packages[0].getEntries()) {
+            if (entry.path == refManifest.icon && !entry.isDirectory) {
+                auto iconResult = merged.setIcon(entry.data);
+                if (!iconResult.success) {
+                    printError("Failed to copy icon into merged package: " +
+                               iconResult.error);
+                    return 1;
+                }
+                break;
+            }
+        }
+    }
+
     // Create a unique temp directory for extracting variants
     auto tmpBase = std::filesystem::temp_directory_path() /
         ("lgx-merge-" + std::to_string(getpid()) + "-" +
