@@ -1,0 +1,42 @@
+name: Windows
+
+# The entire per-repo cost of Windows CI. Everything else -- the Nix install
+# pinning (this repo's ci.yml still uses install-nix-action@v27, i.e. Nix 2.22,
+# which is below the 2.26 floor where --override-input keeps the overridden
+# input's own lock), the binary cache (this repo pushes to none today, so a
+# naive Windows job here would rebuild mingw icu4c on every single run), the
+# target-existence guard, the cold-cache refusal, the PE-format and
+# import-closure gates, the artifact hand-off and its round-trip check, and the
+# real-Windows execution -- lives once in logos-co/logos-windows-ci.
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  windows:
+    uses: logos-co/logos-windows-ci/.github/workflows/windows-ci.yml@v1
+    secrets: inherit
+    with:
+      targets: lgx
+      # The smoke script is the EXERCISE HALF of doctests/lgx-cli.test.yaml --
+      # the 14 of its 15 `run:` steps that only ever drive the built binary. Its
+      # one remaining step, `nix build '...#lgx' -o lgx`, is not reproduced
+      # anywhere below: `targets: lgx` above IS that step. So this gets the
+      # doc-tested packaging lifecycle onto Windows without doctest.py, which
+      # cannot run there, having to change at all.
+      #
+      # A COMMITTED FILE RATHER THAN AN INLINE BLOCK, for one concrete reason:
+      # actionlint substitutes a placeholder for `${{ }}` before handing a
+      # script to shellcheck, so a smoke block written inline here is never
+      # linted. `.github/smoke/lgx-cli.sh` is `shellcheck -S style` clean, and
+      # it runs standalone against a native build --
+      #     LGX=lgx/bin/lgx bash .github/smoke/lgx-cli.sh
+      # from a directory holding `lgx/bin/lgx` -- which is how it was developed
+      # and how its assertions were shown to bite.
+      #
+      # `smoke-file` rather than `smoke`, which is also what makes the smoke
+      # jobs check this repo out -- they otherwise only download the artifact.
+      smoke-file: .github/smoke/lgx-cli.sh
