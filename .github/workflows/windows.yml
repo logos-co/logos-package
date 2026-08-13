@@ -21,17 +21,22 @@ jobs:
     secrets: inherit
     with:
       targets: lgx
-      # Paths are relative to the staged tree ROOT, which holds one directory
-      # per target -- so they start with `lgx/`. There is no `stage/bin`:
-      # verified against this repo's real cross-built output, where `stage/`
-      # contains exactly one entry, `lgx/`.
+      # The smoke script is the EXERCISE HALF of doctests/lgx-cli.test.yaml --
+      # the 14 of its 15 `run:` steps that only ever drive the built binary. Its
+      # one remaining step, `nix build '...#lgx' -o lgx`, is not reproduced
+      # anywhere below: `targets: lgx` above IS that step. So this gets the
+      # doc-tested packaging lifecycle onto Windows without doctest.py, which
+      # cannot run there, having to change at all.
       #
-      # Every command here prints on success (verified on a Windows 11 box:
-      # --help 988 B, create "Created package: smoke.lgx", verify "Package
-      # structure is valid"), so none of them needs `run -q`.
-      smoke: |
-        run lgx/bin/lgx.exe --help | tee help.txt
-        grep -qi usage help.txt
-        run lgx/bin/lgx.exe create smoke
-        test -s smoke.lgx
-        run lgx/bin/lgx.exe verify smoke.lgx
+      # A COMMITTED FILE RATHER THAN AN INLINE BLOCK, for one concrete reason:
+      # actionlint substitutes a placeholder for `${{ }}` before handing a
+      # script to shellcheck, so a smoke block written inline here is never
+      # linted. `.github/smoke/lgx-cli.sh` is `shellcheck -S style` clean, and
+      # it runs standalone against a native build --
+      #     LGX=lgx/bin/lgx bash .github/smoke/lgx-cli.sh
+      # from a directory holding `lgx/bin/lgx` -- which is how it was developed
+      # and how its assertions were shown to bite.
+      #
+      # `smoke-file` rather than `smoke`, which is also what makes the smoke
+      # jobs check this repo out -- they otherwise only download the artifact.
+      smoke-file: .github/smoke/lgx-cli.sh
