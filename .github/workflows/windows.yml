@@ -7,7 +7,7 @@ name: Windows
 # naive Windows job here would rebuild mingw icu4c on every single run), the
 # target-existence guard, the cold-cache refusal, the PE-format and
 # import-closure gates, the artifact hand-off and its round-trip check, and the
-# real-Windows execution -- lives once in logos-co/logos-nix.
+# real-Windows execution -- lives once in logos-co/logos-windows-ci.
 
 on:
   push:
@@ -17,7 +17,7 @@ on:
 
 jobs:
   windows:
-    uses: logos-co/logos-nix/.github/workflows/windows-ci.yml@v1
+    uses: logos-co/logos-windows-ci/.github/workflows/windows-ci.yml@v1
     secrets: inherit
     with:
       targets: lgx
