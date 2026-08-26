@@ -44,7 +44,7 @@ run "$LGX" manifest greeter.lgx | tee m1.txt
 grep -q "greeter"                m1.txt
 grep -q "0.0.1"                  m1.txt
 grep -q "Manifest ver.:"         m1.txt
-grep -q "0.4.0"                  m1.txt
+grep -q "0.5.0"                  m1.txt
 grep -q "Variants:       (none)" m1.txt
 grep -q "Signed:         no"     m1.txt
 
