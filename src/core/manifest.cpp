@@ -178,6 +178,28 @@ std::optional<Manifest> Manifest::fromJson(const std::string& jsonStr) {
             m.view = j["view"].get<std::string>();
         }
 
+        // "provides" — optional. Accepts both the object form used in the
+        // author's metadata.json ([{"intent": "a.b"}]) and a bare string array,
+        if (j.contains("provides")) {
+            if (!j["provides"].is_array()) {
+                lastError_ = "Invalid 'provides' field (must be an array)";
+                return std::nullopt;
+            }
+            for (const auto& entry : j["provides"]) {
+                ProvidedIntent p;
+                if (entry.is_string()) {
+                    p.intent = entry.get<std::string>();
+                } else if (entry.is_object() && entry.contains("intent")
+                           && entry["intent"].is_string()) {
+                    p.intent = entry["intent"].get<std::string>();
+                } else {
+                    continue;
+                }
+
+                if (!p.intent.empty()) m.provides.push_back(p);
+            }
+        }
+
         // "display_name" — optional human-readable label.
         if (j.contains("display_name")) {
             if (!j["display_name"].is_string()) {
@@ -245,6 +267,19 @@ std::string Manifest::toJson() const {
     }
     if (!displayName.empty()) {
         j["display_name"] = displayName;
+    }
+    // Objects rather than bare strings, even though `intent` is the only field.
+    // One shape on the wire, and adding a field later costs no shape change and
+    // no manifest version bump. A bare string on the way IN is normalised up to
+    // this form, so readers never see two shapes.
+    if (!provides.empty()) {
+        json providesArr = json::array();
+        for (const auto& p : provides) {
+            json entry = json::object();
+            entry["intent"] = p.intent;
+            providesArr.push_back(std::move(entry));
+        }
+        j["provides"] = std::move(providesArr);
     }
 
     // Serialize with 2-space indent, sorted keys
@@ -413,9 +448,12 @@ bool Manifest::isVersionSupported(const std::string& version) {
 
     // Currently only major version 0 is supported. Within 0.x we accept
     // 0.2.* (legacy plain-string dependencies), 0.3.* (richer dependencies
-    // with optional version range + signer DID) and 0.4.* (root-level
-    // assets/ slot); see the Dependency parsing in fromJson() for the
-    // compatibility shim and requiresIconContract() for the icon gate.
+    // with optional version range + signer DID), 0.4.* (root-level assets/
+    // slot) and 0.5.* (`provides`); see the Dependency parsing in fromJson()
+    // for the compatibility shim and requiresIconContract() for the icon gate.
+    // Every addition so far has been an OPTIONAL field, so an older client
+    // reading a newer manifest ignores what it does not know rather than
+    // failing — which is why this stays a major-version check.
     return major == "0";
 }
 
