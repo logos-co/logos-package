@@ -57,7 +57,7 @@ link the result as `./lgx`, so the binary lands at `./lgx/bin/lgx`.
 
 ```bash
 # From inside the clone this is simply: nix build '.#lgx' -o lgx
-nix build 'github:logos-co/logos-package/43378dab2ffc569a28f144d3f62a0f089c3580df#lgx' -o lgx
+nix build 'github:logos-co/logos-package/0a1311f809887715b4b6a21820c93591314fb573#lgx' -o lgx
 ```
 
 The `-o lgx` flag names the result symlink, so the executable is at `./lgx/bin/lgx`.
@@ -108,7 +108,7 @@ sensible defaults plus an empty `variants/` directory — to `<name>.lgx`.
 ### 3.2 Read the fresh manifest
 
 `lgx manifest` prints the embedded `manifest.json` in human-readable form. A
-freshly created package starts at version `0.0.1`, manifest schema `0.4.0`, with
+freshly created package starts at version `0.0.1`, manifest schema `0.5.0`, with
 no type, no variants, and no signature yet.
 
 ```bash

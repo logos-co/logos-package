@@ -54,13 +54,25 @@ struct Dependency {
 /**
  * Manifest represents the manifest.json file in an LGX package.
  */
+// An intent a package can service.
+//
+// NAME ONLY. The author's metadata.json may also describe the payload shape
+// (`provides[].params`), and the shell enforces that against the INSTALLED
+// metadata.json — but none of it is carried here. The manifest copy exists for
+// one question, asked before a package is installed: "which installable package
+// provides X?" That is answered by the name alone.
+struct ProvidedIntent {
+    std::string intent;
+};
+
 class Manifest {
 public:
-    // Current manifest version. Bumped to 0.4.0 for the root-level assets/
-    // slot: `icon` now points at a variant-independent asset (assets/icon.png)
-    // that is exactly 256x256 PNG, so hosts can display it without unpacking
-    // a platform build. 0.2.x and 0.3.x manifests are still readable.
-    static constexpr const char* CURRENT_VERSION = "0.4.0";
+    // Current manifest version. Bumped to 0.5.0 for `provides`: the intents a
+    // package can service. It lives here, in the SIGNED manifest, rather than
+    // only in the unsigned metadata.json on disk, so the capability claim is
+    // covered by the package signature and is legible to a catalog before the
+    // package is installed. 0.2.x-0.4.x manifests are still readable.
+    static constexpr const char* CURRENT_VERSION = "0.5.0";
 
     // Canonical in-package icon location for 0.4.0+. The author's
     // metadata.json path stays free-form; the bundler normalises to this.
@@ -110,6 +122,13 @@ public:
 
     // human-readable label; consumers fall back to `name` when unset.
     std::string displayName;
+
+    // Intents this package can service, e.g. "chat.group.open". Names only.
+    // Copied from the author's metadata.json at bundle time. Carried here so a
+    // CATALOG can answer "which installable package provides X?" without the
+    // package being installed — the registry inside a running shell reads the
+    // installed metadata.json, but nothing outside can.
+    std::vector<ProvidedIntent> provides;
     
     // Main mapping: variant -> relative path to entry point
     std::map<std::string, std::string> main;

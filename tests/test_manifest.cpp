@@ -243,6 +243,145 @@ TEST(ManifestTest, ToJson_RoundtripPreservesDisplayName) {
     EXPECT_EQ(parsed->displayName, "Friendly Label");
 }
 
+TEST(ManifestTest, Provides_AcceptsBothAuthorAndWireForms) {
+    // The author's metadata.json uses objects (because `uses` needs room for
+    // cardinality); a hand-written manifest is likely to use bare strings.
+    // Both parse, and anything without an "intent" string is skipped rather
+    // than failing the package.
+    std::string json = R"({
+      "manifestVersion": "0.5.0",
+      "name": "chat_ui",
+      "version": "1.0.0",
+      "description": "",
+      "author": "",
+      "type": "ui_qml",
+      "category": "",
+      "icon": "",
+      "view": "Main.qml",
+      "dependencies": [],
+      "provides": [{"intent": "chat.group.open"}, "wallet.sign", {"noIntentKey": 1}]
+    })";
+
+    auto m = Manifest::fromJson(json);
+    ASSERT_TRUE(m.has_value());
+    ASSERT_EQ(m->provides.size(), 2u);
+    EXPECT_EQ(m->provides[0].intent, "chat.group.open");
+    EXPECT_EQ(m->provides[1].intent, "wallet.sign");
+}
+
+TEST(ManifestTest, Provides_EmitsTheObjectFormOnWrite) {
+    std::string json = R"({
+      "manifestVersion": "0.5.0",
+      "name": "chat_ui",
+      "version": "1.0.0",
+      "description": "",
+      "author": "",
+      "type": "ui_qml",
+      "category": "",
+      "icon": "",
+      "view": "Main.qml",
+      "dependencies": [],
+      "provides": [{"intent": "chat.group.open"}]
+    })";
+
+    auto m = Manifest::fromJson(json);
+    ASSERT_TRUE(m.has_value());
+
+    // Objects on the wire, so the parameter shape survives. One shape, not two:
+    // a provider with no params is still emitted as an object.
+    const std::string out = m->toJson();
+    EXPECT_NE(out.find("\"chat.group.open\""), std::string::npos);
+    EXPECT_NE(out.find("intent"), std::string::npos);
+
+    auto round = Manifest::fromJson(out);
+    ASSERT_TRUE(round.has_value());
+    ASSERT_EQ(round->provides.size(), m->provides.size());
+    EXPECT_EQ(round->provides[0].intent, m->provides[0].intent);
+}
+
+TEST(ManifestTest, Provides_SurvivesAFieldByFieldCopy) {
+    // merge_command copies the reference manifest field by field rather than
+    // assigning the whole struct, so every new field has to be added there by
+    // hand. `provides` was missed on the first pass: merging per-platform
+    // packages into a multi-variant one silently un-declared its intents.
+    //
+    // This pins the property that matters — capabilities belong to the package,
+    // not to a platform build, so they must survive the merge.
+    std::string json = R"({
+      "manifestVersion": "0.5.0",
+      "name": "chat_ui",
+      "version": "1.0.0",
+      "description": "",
+      "author": "",
+      "type": "ui_qml",
+      "category": "",
+      "icon": "",
+      "view": "Main.qml",
+      "dependencies": [],
+      "provides": ["chat.group.open"]
+    })";
+
+    auto ref = Manifest::fromJson(json);
+    ASSERT_TRUE(ref.has_value());
+
+    Manifest merged;
+    merged.manifestVersion = ref->manifestVersion;
+    merged.name = ref->name;
+    merged.version = ref->version;
+    merged.type = ref->type;
+    merged.view = ref->view;
+    merged.dependencies = ref->dependencies;
+    merged.provides = ref->provides;
+
+    ASSERT_EQ(merged.provides.size(), ref->provides.size());
+    EXPECT_EQ(merged.provides[0].intent, ref->provides[0].intent);
+    EXPECT_NE(merged.toJson().find("chat.group.open"), std::string::npos);
+}
+
+TEST(ManifestTest, Provides_KeepsOnlyTheNameNotTheParamShape) {
+    // The author's metadata.json may describe an intent's payload; the manifest
+    // deliberately does not carry that description. The shell enforces params
+    // against the INSTALLED metadata.json, and a second copy here would be a
+    // bundle-time snapshot that nothing reads and that can drift from the
+    // original. The catalog question this copy exists to answer — "which
+    // installable package provides X?" — needs the name and nothing else.
+    std::string json = R"({
+      "manifestVersion": "0.5.0",
+      "name": "wallet_ui",
+      "version": "1.0.0",
+      "description": "",
+      "author": "",
+      "type": "ui_qml",
+      "category": "",
+      "icon": "",
+      "view": "Main.qml",
+      "dependencies": [],
+      "provides": [{
+        "intent": "wallet.send",
+        "params": [{"name": "to", "type": "string", "required": true}]
+      }]
+    })";
+
+    auto m = Manifest::fromJson(json);
+    ASSERT_TRUE(m.has_value());
+    ASSERT_EQ(m->provides.size(), 1u);
+    EXPECT_EQ(m->provides[0].intent, "wallet.send");
+
+    // Accepted on the way in, dropped on the way out.
+    const std::string out = m->toJson();
+    EXPECT_NE(out.find("wallet.send"), std::string::npos);
+    EXPECT_EQ(out.find("\"params\""), std::string::npos);
+}
+
+TEST(ManifestTest, ToJson_OmitsProvidesWhenUnset) {
+    auto manifest = Manifest::fromJson(VALID_MANIFEST_JSON);
+    ASSERT_TRUE(manifest.has_value());
+    ASSERT_TRUE(manifest->provides.empty());
+
+    // Older packages must round-trip byte-identically.
+    EXPECT_EQ(manifest->toJson().find("provides"), std::string::npos);
+}
+
 TEST(ManifestTest, ToJson_OmitsDisplayNameWhenUnset) {
     auto manifest = Manifest::fromJson(VALID_MANIFEST_JSON);
     ASSERT_TRUE(manifest.has_value());

@@ -55,11 +55,11 @@ package.lgx (tar.gz)
 
 ### Manifest Schema
 
-The current manifest schema is `0.4.0`. It is a UTF-8 encoded JSON file with the following required fields:
+The current manifest schema is `0.5.0`. It is a UTF-8 encoded JSON file with the following required fields:
 
 ```json
 {
-  "manifestVersion": "0.4.0",
+  "manifestVersion": "0.5.0",
   "name": "package-name",
   "version": "1.2.3",
   "description": "Package description",
@@ -75,7 +75,10 @@ The current manifest schema is `0.4.0`. It is a UTF-8 encoded JSON file with the
   "main": {
     "linux-amd64": "path/to/main.so",
     "darwin-arm64": "path/to/main.dylib"
-  }
+  },
+  "provides": [
+    {"intent": "chat.group.open"}
+  ]
 }
 ```
 
@@ -94,8 +97,9 @@ The current manifest schema is `0.4.0`. It is a UTF-8 encoded JSON file with the
 | `dependencies` | array | List of dependency entries — see *Dependency entries* below | Runtime needs |
 | `main` | object | Map of variant name → relative path to entry point (e.g ) `"linux-amd64": "path/to/main.so"` means `linux-amd64/path/to/main.so` | Entry point resolution |
 | `display_name` | string | *Optional.* Human-readable label shown by UI consumers (Package Manager, App Manager) and CLI tools (`lm metadata`, `lgx manifest`). Falls back to `name` when absent. | Display/branding |
+| `provides` | array | *Optional.* Intents this package can service — see *Provided intents* below. Absent ⇒ the package services none. | Capability discovery |
 
-All fields except `display_name` are required to ensure consistent metadata for hosts/registries and applications.
+All fields except `display_name` and `provides` are required to ensure consistent metadata for hosts/registries and applications.
 
 #### Dependency entries
 
@@ -109,9 +113,47 @@ Each element of the `dependencies` array is one of:
 
 `lgx verify` syntactically validates that `version` parses as a semver range and that `signer` matches the `did:jwk:` shape. Semantic matching (does the constraint resolve to a real candidate?) is the responsibility of the resolver in `logos-package-downloader`.
 
+#### Provided intents
+
+At `manifestVersion` `0.5.0`+, `provides` lists the **app-to-app intents** the package
+can service, e.g. `chat.group.open`. Each element is one of:
+
+- **Object** with `intent` (string, required) — the intent name.
+- **Plain string**, accepted on read and equivalent to `{"intent": <string>}`.
+
+Entries are **normalized to the object form on write**, so a reader never sees two
+shapes. Entries that are neither a string nor an object carrying a string `intent`,
+and entries whose `intent` is empty, are skipped rather than failing the parse. The
+array is copied from the reference package by `lgx merge`, so a multi-variant package
+keeps the capability claim of the variants it was built from.
+
+**Names only.** The author's `metadata.json` may also describe each intent's payload
+shape (`provides[].params`); none of that is carried here. The manifest copy exists to
+answer one question, asked *before* a package is installed: "which installable package
+provides X?" — which the name alone answers. The shell enforces the payload shape
+against the installed `metadata.json`, which stays the source of truth for it.
+
+**Why the signed manifest rather than only `metadata.json`.** `metadata.json` is
+unsigned and only readable once the package is on disk. Putting the claim in
+`manifest.json` covers it by `manifest.sig`, so a package cannot claim a capability it
+was not published with, and makes it legible to a catalog or registry that has the
+manifest but has never unpacked — let alone installed — the package.
+
+**Declaration, not authorization.** `provides` says what a package *can* service. It
+grants nothing: resolution among candidates, user consent and dispatch are the shell's
+(see `logos-basecamp`'s `IntentBroker`), and `lgx` neither validates intent names
+against a registry nor checks that the payload implements them.
+
 #### Schema version compatibility
 
-Tooling reads both `manifestVersion: "0.2.x"` and `manifestVersion: "0.3.x"`. Packages produced by `lgx create` use `0.3.0`. A 0.2.0 manifest with plain-string dependencies round-trips unchanged through tooling — strings are emitted as strings, object-form entries are emitted as objects. Bumping the major version (1.x.x) is reserved for future breaking changes.
+Tooling reads `manifestVersion` `0.2.x` through `0.5.x`; packages produced by `lgx create`
+use `0.5.0`. Every field added across those versions is **optional**, so compatibility runs
+both ways: an older client reading a newer manifest ignores what it does not recognize
+rather than failing, which is why the check is on the major version alone. A 0.2.0 manifest
+with plain-string dependencies round-trips unchanged through tooling — strings are emitted
+as strings, object-form entries are emitted as objects. Two contracts are gated on the minor
+version rather than applied retroactively: the *icon contract* (`0.4.0`+) and `provides`
+(`0.5.0`+). Bumping the major version (1.x.x) is reserved for future breaking changes.
 
 ### Icon Contract
 
@@ -152,8 +194,8 @@ is asserted to be complete.
 **Backward compatibility.** Manifests below `0.4.0` are **exempt**. `icon: ""`
 was legal at `0.3.0` (it is what `lgx create` defaulted to), so applying the
 rule unconditionally would make every already-published package fail
-verification and become uninstallable. Tooling reads `0.2.x`, `0.3.x` and
-`0.4.x`; only `0.4.0`+ carries the icon contract.
+verification and become uninstallable. Tooling reads `0.2.x` through `0.5.x`;
+only `0.4.0`+ carries the icon contract.
 
 ### `ui_qml` Contract
 

@@ -55,7 +55,7 @@ detail; here they are just setup.)
 
 ```bash
 # From inside the clone this is simply: nix build '.#lgx' -o lgx
-nix build 'github:logos-co/logos-package/43378dab2ffc569a28f144d3f62a0f089c3580df#lgx' -o lgx
+nix build 'github:logos-co/logos-package/0a1311f809887715b4b6a21820c93591314fb573#lgx' -o lgx
 ```
 
 ### 1.2 Create and populate greeter.lgx
