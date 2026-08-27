@@ -221,6 +221,19 @@ public:
     bool isSigned() const { return manifestSig_.has_value(); }
 
     /**
+     * The package's signature document, or nullopt when it carries none.
+     *
+     * Exposed so a consumer can CARRY the signature somewhere the .lgx will
+     * not follow. extractVariant() copies `variants/<v>/` and `assets/` and
+     * nothing else, so an installed package keeps the signed bytes
+     * (manifest.json, written from getManifest().toJson()) but loses the
+     * signature over them — leaving the install tree holding evidence it
+     * cannot check. A consumer that writes this alongside the extracted
+     * manifest can verify, later and offline, who signed what is on disk.
+     */
+    const std::optional<crypto::ManifestSig>& getManifestSig() const { return manifestSig_; }
+
+    /**
      * Clear any existing signature.
      * Called automatically when package content is modified.
      * Hashes are NOT cleared — they are recomputed separately.

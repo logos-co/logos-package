@@ -418,3 +418,240 @@ TEST_F(LibraryTest, ExtractNullArgs) {
     
     lgx_free_package(pkg);
 }
+
+// ============================================================================
+// Carrying a signature out of a package, and checking it against a caller's DID
+//
+// lgx_extract() writes variants/<v>/ and assets/ only, so a consumer that
+// installs a package holds the signed bytes without the signature over them.
+// These two functions are what let the signature travel and be checked later,
+// offline, against a key the ASKER chooses.
+// ============================================================================
+
+class ManifestSignatureTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        dir_ = std::filesystem::temp_directory_path() / "lgx_test_manifest_sig";
+        std::filesystem::remove_all(dir_);
+        std::filesystem::create_directories(dir_ / "content");
+        std::ofstream(dir_ / "content" / "payload.txt") << "hello";
+    }
+    void TearDown() override { std::filesystem::remove_all(dir_); }
+
+    // A real, structurally valid package.
+    std::string makePackage(const std::string& name, const std::string& version) {
+        auto path = (dir_ / (name + ".lgx")).string();
+        if (!lgx_create(path.c_str(), name.c_str()).success) return {};
+        lgx_package_t pkg = lgx_load(path.c_str());
+        if (!pkg) return {};
+        lgx_set_version(pkg, version.c_str());
+        auto res = lgx_add_variant(pkg, "linux-x86_64",
+                                   (dir_ / "content").string().c_str(), "payload.txt");
+        if (!res.success) { lgx_free_package(pkg); return {}; }
+        res = lgx_save(pkg, path.c_str());
+        lgx_free_package(pkg);
+        return res.success ? path : std::string{};
+    }
+    std::string makeKey(const std::string& name) {
+        if (!lgx_keygen(name.c_str(), dir_.string().c_str()).success) return {};
+        return (dir_ / (name + ".jwk")).string();
+    }
+    std::string didOf(const std::string& keyName) {
+        std::ifstream f(dir_ / (keyName + ".did"));
+        std::string did; std::getline(f, did); return did;
+    }
+    // The two documents a consumer would carry into an install tree.
+    bool carry(const std::string& lgxPath, std::string& manifest, std::string& sig) {
+        lgx_package_t pkg = lgx_load(lgxPath.c_str());
+        if (!pkg) return false;
+        const char* m = lgx_get_manifest_json(pkg);
+        const char* s = lgx_get_manifest_sig_json(pkg);
+        manifest = m ? m : "";
+        sig = s ? s : "";
+        lgx_free_package(pkg);
+        return !manifest.empty();
+    }
+    std::filesystem::path dir_;
+};
+
+TEST_F(ManifestSignatureTest, UnsignedPackageHasNoSignatureDocument) {
+    auto path = makePackage("plain", "1.0.0");
+    ASSERT_FALSE(path.empty());
+    lgx_package_t pkg = lgx_load(path.c_str());
+    ASSERT_NE(pkg, nullptr);
+    EXPECT_EQ(lgx_get_manifest_sig_json(pkg), nullptr);
+    lgx_free_package(pkg);
+}
+
+TEST_F(ManifestSignatureTest, NullPackageIsRejected) {
+    EXPECT_EQ(lgx_get_manifest_sig_json(nullptr), nullptr);
+}
+
+// THE PREMISE. lgx_get_manifest_json() returns getManifest().toJson(), the
+// same expression signPackage() signs, so the manifest a consumer carries away
+// is byte-for-byte the message the signature covers.
+TEST_F(ManifestSignatureTest, TheCarriedManifestIsTheSignedMessage) {
+    auto path = makePackage("signed", "1.0.0");
+    ASSERT_FALSE(path.empty());
+    auto key = makeKey("pub");
+    ASSERT_FALSE(key.empty());
+    ASSERT_TRUE(lgx_sign(path.c_str(), key.c_str(), nullptr, nullptr).success);
+
+    std::string manifest, sig;
+    ASSERT_TRUE(carry(path, manifest, sig));
+    ASSERT_FALSE(sig.empty());
+
+    EXPECT_EQ(lgx_check_manifest_signature(manifest.data(), manifest.size(),
+                                           sig.c_str(), didOf("pub").c_str()),
+              LGX_SIG_CHECK_OK);
+}
+
+// THE PROPERTY THE PARAMETER EXISTS FOR. The document is entirely
+// self-consistent -- a genuine signature by a real key, naming that key's DID
+// -- and it is still refused when the caller asks about a DIFFERENT key.
+TEST_F(ManifestSignatureTest, AnotherKeysGenuineSignatureIsAMismatch) {
+    auto path = makePackage("signed", "1.0.0");
+    ASSERT_FALSE(path.empty());
+    auto attackerKey = makeKey("attacker");
+    ASSERT_FALSE(attackerKey.empty());
+    ASSERT_FALSE(makeKey("publisher").empty());
+    ASSERT_TRUE(lgx_sign(path.c_str(), attackerKey.c_str(), nullptr, nullptr).success);
+
+    std::string manifest, sig;
+    ASSERT_TRUE(carry(path, manifest, sig));
+
+    // Self-consistent: it verifies under its own DID.
+    EXPECT_EQ(lgx_check_manifest_signature(manifest.data(), manifest.size(),
+                                           sig.c_str(), didOf("attacker").c_str()),
+              LGX_SIG_CHECK_OK);
+    // ...and that buys it nothing when the caller names the publisher.
+    EXPECT_EQ(lgx_check_manifest_signature(manifest.data(), manifest.size(),
+                                           sig.c_str(), didOf("publisher").c_str()),
+              LGX_SIG_CHECK_MISMATCH);
+}
+
+// The DID inside the document is never consulted for the key, so relabelling
+// it changes nothing. This is the case a "compare the DID to the expected one,
+// then verify with it" implementation would accept.
+TEST_F(ManifestSignatureTest, RelabellingTheDidDoesNotChangeTheAnswer) {
+    auto path = makePackage("signed", "1.0.0");
+    ASSERT_FALSE(path.empty());
+    auto attackerKey = makeKey("attacker");
+    ASSERT_FALSE(attackerKey.empty());
+    ASSERT_FALSE(makeKey("publisher").empty());
+    ASSERT_TRUE(lgx_sign(path.c_str(), attackerKey.c_str(), nullptr, nullptr).success);
+
+    std::string manifest, sig;
+    ASSERT_TRUE(carry(path, manifest, sig));
+
+    // Rewrite ONLY the did field to name the publisher, leaving the attacker's
+    // genuine signature in place. Textual, so the test does not depend on the
+    // JSON library the caller happens to use.
+    const std::string publisherDid = didOf("publisher");
+    const std::string attackerDid  = didOf("attacker");
+    auto at = sig.find(attackerDid);
+    ASSERT_NE(at, std::string::npos);
+    std::string relabelled = sig.substr(0, at) + publisherDid
+                           + sig.substr(at + attackerDid.size());
+    ASSERT_NE(relabelled.find(publisherDid), std::string::npos);
+
+    EXPECT_EQ(lgx_check_manifest_signature(manifest.data(), manifest.size(),
+                                           relabelled.c_str(), publisherDid.c_str()),
+              LGX_SIG_CHECK_MISMATCH)
+        << "a signature wearing the expected DID's name was accepted";
+}
+
+// A signature covers a MESSAGE, not a package name. The manifest carries the
+// Merkle root over the payload, so a signature lifted from another package
+// cannot describe these bytes.
+TEST_F(ManifestSignatureTest, AGenuineSignatureOverOtherBytesIsAMismatch) {
+    auto key = makeKey("pub");
+    ASSERT_FALSE(key.empty());
+
+    auto a = makePackage("pkg_a", "1.0.0");
+    auto b = makePackage("pkg_b", "2.0.0");
+    ASSERT_FALSE(a.empty());
+    ASSERT_FALSE(b.empty());
+    ASSERT_TRUE(lgx_sign(a.c_str(), key.c_str(), nullptr, nullptr).success);
+    ASSERT_TRUE(lgx_sign(b.c_str(), key.c_str(), nullptr, nullptr).success);
+
+    std::string manifestA, sigA, manifestB, sigB;
+    ASSERT_TRUE(carry(a, manifestA, sigA));
+    ASSERT_TRUE(carry(b, manifestB, sigB));
+
+    const std::string did = didOf("pub");
+    EXPECT_EQ(lgx_check_manifest_signature(manifestA.data(), manifestA.size(),
+                                           sigA.c_str(), did.c_str()),
+              LGX_SIG_CHECK_OK);
+    EXPECT_EQ(lgx_check_manifest_signature(manifestA.data(), manifestA.size(),
+                                           sigB.c_str(), did.c_str()),
+              LGX_SIG_CHECK_MISMATCH);
+}
+
+// A caller's DID that is not a did:jwk Ed25519 key is reported as the CALLER's
+// error, distinctly from unusable evidence. Callers rank the two differently:
+// missing evidence is commonly tolerated, an unsatisfiable expectation is not,
+// and collapsing them would let a typo'd DID be waved through.
+TEST_F(ManifestSignatureTest, ABadExpectedDidIsItsOwnAnswer) {
+    auto path = makePackage("signed", "1.0.0");
+    ASSERT_FALSE(path.empty());
+    auto key = makeKey("pub");
+    ASSERT_FALSE(key.empty());
+    ASSERT_TRUE(lgx_sign(path.c_str(), key.c_str(), nullptr, nullptr).success);
+    std::string manifest, sig;
+    ASSERT_TRUE(carry(path, manifest, sig));
+
+    for (const char* bad : {"", "did:jwk:!!!!", "did:web:example.com", "nonsense"}) {
+        EXPECT_EQ(lgx_check_manifest_signature(manifest.data(), manifest.size(),
+                                               sig.c_str(), bad),
+                  LGX_SIG_CHECK_BAD_DID) << bad;
+    }
+    EXPECT_EQ(lgx_check_manifest_signature(manifest.data(), manifest.size(),
+                                           sig.c_str(), nullptr),
+              LGX_SIG_CHECK_BAD_DID);
+}
+
+// Evidence that is absent or unreadable refutes nothing, and is reported
+// separately from evidence that refutes.
+TEST_F(ManifestSignatureTest, UnusableEvidenceIsNotAMismatch) {
+    auto path = makePackage("signed", "1.0.0");
+    ASSERT_FALSE(path.empty());
+    auto key = makeKey("pub");
+    ASSERT_FALSE(key.empty());
+    ASSERT_TRUE(lgx_sign(path.c_str(), key.c_str(), nullptr, nullptr).success);
+    std::string manifest, sig;
+    ASSERT_TRUE(carry(path, manifest, sig));
+    const std::string did = didOf("pub");
+
+    const char* unusable[] = {
+        nullptr,                                             // no document
+        "",                                                  // empty
+        "not json at all",                                   // unparseable
+        R"({"version":2,"algorithm":"ed25519","did":"x","signature":"AA"})",  // version
+        R"({"version":1,"algorithm":"rsa","did":"x","signature":"AA"})",      // algorithm
+        R"({"version":1,"algorithm":"ed25519","did":"x","signature":"AA"})",  // short sig
+    };
+    for (const char* u : unusable) {
+        EXPECT_EQ(lgx_check_manifest_signature(manifest.data(), manifest.size(),
+                                               u, did.c_str()),
+                  LGX_SIG_CHECK_UNUSABLE) << (u ? u : "(null)");
+    }
+}
+
+// An empty message is a message. It must not be mistaken for "nothing to
+// check": a caller handing over a truncated manifest gets a mismatch, not a
+// pass.
+TEST_F(ManifestSignatureTest, AnEmptyMessageIsAMismatchNotAPass) {
+    auto path = makePackage("signed", "1.0.0");
+    ASSERT_FALSE(path.empty());
+    auto key = makeKey("pub");
+    ASSERT_FALSE(key.empty());
+    ASSERT_TRUE(lgx_sign(path.c_str(), key.c_str(), nullptr, nullptr).success);
+    std::string manifest, sig;
+    ASSERT_TRUE(carry(path, manifest, sig));
+
+    EXPECT_EQ(lgx_check_manifest_signature("", 0, sig.c_str(), didOf("pub").c_str()),
+              LGX_SIG_CHECK_MISMATCH);
+    EXPECT_EQ(lgx_check_manifest_signature(nullptr, 99, sig.c_str(), didOf("pub").c_str()),
+              LGX_SIG_CHECK_MISMATCH);
+}
