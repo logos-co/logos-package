@@ -214,6 +214,23 @@ LGX_EXPORT void lgx_set_icon(lgx_package_t pkg, const char* icon);
  */
 LGX_EXPORT const char* lgx_get_manifest_json(lgx_package_t pkg);
 
+/**
+ * Get the package's manifest.sig document as JSON.
+ *
+ * The counterpart to lgx_get_manifest_json(), and it exists for the same
+ * reason: lgx_extract() writes `variants/<v>/` and `assets/` only, so a
+ * consumer that extracts a package ends up holding the SIGNED BYTES
+ * (manifest.json) without the signature over them. Both together are what
+ * make an installed package's publisher checkable after the .lgx is gone.
+ *
+ * The returned string is owned by `pkg` and is invalidated by the next call
+ * on the same package. Do not free it.
+ *
+ * @param pkg Package handle
+ * @return manifest.sig JSON, or NULL if the package is unsigned
+ */
+LGX_EXPORT const char* lgx_get_manifest_sig_json(lgx_package_t pkg);
+
 /* Signature types and functions */
 
 typedef struct {
@@ -243,6 +260,54 @@ LGX_EXPORT lgx_signature_info_t lgx_verify_signature(
  * @param info Signature info to free
  */
 LGX_EXPORT void lgx_free_signature_info(lgx_signature_info_t info);
+
+/* Outcome of checking a detached manifest signature against a caller's DID. */
+typedef enum {
+    /* `expected_did`'s Ed25519 key produced this signature over these bytes. */
+    LGX_SIG_CHECK_OK = 0,
+    /* A usable signature document that `expected_did` did NOT produce.
+       Definitive: somebody else signed these bytes, or these are not the
+       bytes that were signed. */
+    LGX_SIG_CHECK_MISMATCH = 1,
+    /* No usable signature document: NULL, unparseable, unsupported version
+       or algorithm, or a signature that is not 64 bytes. Nothing was proved
+       and nothing was disproved. */
+    LGX_SIG_CHECK_UNUSABLE = 2,
+    /* `expected_did` is not a did:jwk carrying an Ed25519 key. The CALLER's
+       input is malformed, not the package's. Distinct from UNUSABLE because
+       the remedy is the opposite one, and distinct from OK because a pin
+       nobody can parse must never be treated as satisfied. */
+    LGX_SIG_CHECK_BAD_DID = 3
+} lgx_sig_check_t;
+
+/**
+ * Check a detached manifest signature against a DID the CALLER supplies.
+ *
+ * Answers exactly one question: did `expected_did`'s key sign these bytes?
+ *
+ * THE DID IN `sig_json` IS NEVER CONSULTED FOR THE KEY, and that is the whole
+ * point of the parameter. Reading the DID out of the signature document,
+ * comparing it to a pin, and then verifying with that same document's key
+ * proves only that the document is INTERNALLY CONSISTENT — an attacker who
+ * replaces the signature also replaces the DID beside it, signs the bytes with
+ * a key they own, and every check agrees. Taking the key from the caller's DID
+ * instead means an attacker must produce an Ed25519 signature under a key they
+ * do not have. `sig_json` contributes the signature bytes and nothing else.
+ *
+ * Verifies over the caller's bytes verbatim. The bytes to pass are the ones
+ * lgx_get_manifest_json() returns — Package::signPackage() signs
+ * getManifest().toJson(), the same expression, so a manifest.json written from
+ * that getter is byte-identical to what was signed by construction.
+ *
+ * @param manifest_bytes The signed message (manifest JSON). Not NUL-dependent.
+ * @param manifest_len   Length of manifest_bytes in bytes
+ * @param sig_json       manifest.sig document, as from lgx_get_manifest_sig_json()
+ * @param expected_did   did:jwk whose key must have signed. Never taken from sig_json.
+ * @return an lgx_sig_check_t; only LGX_SIG_CHECK_OK means verified
+ */
+LGX_EXPORT lgx_sig_check_t lgx_check_manifest_signature(
+    const char* manifest_bytes, size_t manifest_len,
+    const char* sig_json, const char* expected_did);
 
 /**
  * Sign a package with a secret key.

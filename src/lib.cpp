@@ -17,6 +17,7 @@
 #include <memory>
 #include <cstring>
 #include <filesystem>
+#include <algorithm>
 
 /* Thread-local error storage */
 thread_local std::string g_last_error;
@@ -74,6 +75,7 @@ struct lgx_package_opaque {
     std::string description_cache;
     std::string icon_cache;
     std::string manifest_json_cache;
+    std::string manifest_sig_json_cache;
 };
 
 /* Package creation and loading */
@@ -315,6 +317,76 @@ LGX_EXPORT const char* lgx_get_manifest_json(lgx_package_t pkg) {
     clear_error();
     pkg->manifest_json_cache = pkg->pkg->getManifest().toJson();
     return pkg->manifest_json_cache.c_str();
+}
+
+LGX_EXPORT const char* lgx_get_manifest_sig_json(lgx_package_t pkg) {
+    if (!pkg) {
+        set_error("Invalid argument: pkg cannot be NULL");
+        return nullptr;
+    }
+
+    clear_error();
+    const auto& sig = pkg->pkg->getManifestSig();
+    if (!sig.has_value()) {
+        set_error("Package is unsigned");
+        return nullptr;
+    }
+    pkg->manifest_sig_json_cache = sig->toJson();
+    return pkg->manifest_sig_json_cache.c_str();
+}
+
+LGX_EXPORT lgx_sig_check_t lgx_check_manifest_signature(
+    const char* manifest_bytes, size_t manifest_len,
+    const char* sig_json, const char* expected_did) {
+
+    clear_error();
+
+    // The caller's DID is resolved FIRST and on its own. A pin that is not a
+    // did:jwk carrying an Ed25519 key is a caller-side error, and it has to be
+    // reported as one rather than swallowed into "could not check" -- a
+    // typo'd pin that reads as UNUSABLE would be waved through by any policy
+    // that tolerates missing evidence, which is the fail-open this whole
+    // mechanism exists to avoid.
+    if (!expected_did) {
+        set_error("Invalid argument: expected_did cannot be NULL");
+        return LGX_SIG_CHECK_BAD_DID;
+    }
+    if (!lgx::crypto::init()) {
+        set_error("Failed to initialize crypto library");
+        return LGX_SIG_CHECK_UNUSABLE;
+    }
+    auto pkOpt = lgx::crypto::didToPublicKey(expected_did);
+    if (!pkOpt) {
+        set_error(std::string("Not a did:jwk Ed25519 DID: ") + expected_did);
+        return LGX_SIG_CHECK_BAD_DID;
+    }
+
+    if (!sig_json) {
+        set_error("No signature document");
+        return LGX_SIG_CHECK_UNUSABLE;
+    }
+    auto sigOpt = lgx::crypto::ManifestSig::fromJson(sig_json);
+    if (!sigOpt) {
+        set_error("Failed to parse manifest.sig: " + lgx::crypto::ManifestSig::getLastError());
+        return LGX_SIG_CHECK_UNUSABLE;
+    }
+    auto sigBytes = lgx::crypto::base64Decode(sigOpt->signature);
+    if (!sigBytes || sigBytes->size() != lgx::crypto::SIGNATURE_SIZE) {
+        set_error("Signature in manifest.sig is not a 64-byte Ed25519 signature");
+        return LGX_SIG_CHECK_UNUSABLE;
+    }
+    lgx::crypto::Signature sig;
+    std::copy(sigBytes->begin(), sigBytes->end(), sig.begin());
+
+    // sigOpt->did is deliberately not read. See the header.
+    if (!manifest_bytes) manifest_len = 0;
+    std::vector<uint8_t> message(manifest_bytes, manifest_bytes + manifest_len);
+
+    if (!lgx::crypto::verify(message, *pkOpt, sig)) {
+        set_error("Signature does not verify under the supplied DID");
+        return LGX_SIG_CHECK_MISMATCH;
+    }
+    return LGX_SIG_CHECK_OK;
 }
 
 /* Signature functions */
