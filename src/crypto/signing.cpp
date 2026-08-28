@@ -97,13 +97,33 @@ PublicKey extractPublicKey(const SecretKey& sk) {
     return pk;
 }
 
+std::string computeLeafHash(
+    std::vector<std::pair<std::string, std::string>> pathHashes)
+{
+    if (pathHashes.empty()) return "";
+
+    std::sort(pathHashes.begin(), pathHashes.end(),
+        [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    // path + '\0' + hex_hash + '\n'
+    std::vector<uint8_t> concat;
+    for (const auto& [relPath, fileHash] : pathHashes) {
+        concat.insert(concat.end(), relPath.begin(), relPath.end());
+        concat.push_back('\0');
+        concat.insert(concat.end(), fileHash.begin(), fileHash.end());
+        concat.push_back('\n');
+    }
+
+    return sha256Hex(concat);
+}
+
 std::string computeLeafDirectoryHash(
     const std::vector<TarEntry>& entries,
     const std::string& prefix)
 {
     // Collect non-directory entries under prefix/
     std::string prefixSlash = prefix + "/";
-    std::vector<std::pair<std::string, const std::vector<uint8_t>*>> files;
+    std::vector<std::pair<std::string, std::string>> files;
 
     for (const auto& entry : entries) {
         if (entry.isDirectory) continue;
@@ -112,26 +132,10 @@ std::string computeLeafDirectoryHash(
         std::string relPath = entry.path.substr(prefixSlash.size());
         if (relPath.empty()) continue;
 
-        files.emplace_back(relPath, &entry.data);
+        files.emplace_back(std::move(relPath), sha256Hex(entry.data));
     }
 
-    if (files.empty()) return "";
-
-    // Sort by relative path
-    std::sort(files.begin(), files.end(),
-        [](const auto& a, const auto& b) { return a.first < b.first; });
-
-    // Build concatenation: path + '\0' + hex_hash + '\n'
-    std::vector<uint8_t> concat;
-    for (const auto& [relPath, data] : files) {
-        std::string fileHash = sha256Hex(*data);
-        concat.insert(concat.end(), relPath.begin(), relPath.end());
-        concat.push_back('\0');
-        concat.insert(concat.end(), fileHash.begin(), fileHash.end());
-        concat.push_back('\n');
-    }
-
-    return sha256Hex(concat);
+    return computeLeafHash(std::move(files));
 }
 
 std::string computeParentDirectoryHash(

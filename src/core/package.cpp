@@ -53,22 +53,35 @@ PngHeader readPngHeader(const std::vector<uint8_t>& data) {
 } // namespace
 
 void Package::validateIconAsset(VerifyResult& result) const {
+    const std::vector<uint8_t>* iconData = nullptr;
+    for (const auto& entry : entries_) {
+        if (entry.path == manifest_.icon && !entry.isDirectory) {
+            iconData = &entry.data;
+            break;
+        }
+    }
+    validateIconContract(manifest_, iconData, result);
+}
+
+void Package::validateIconContract(const Manifest& manifest,
+                                   const std::vector<uint8_t>* iconData,
+                                   VerifyResult& result) {
     // Version gate. 0.2.x/0.3.x packages predate the assets/ slot and were
     // free to carry `icon: ""`; enforcing the contract on them would render
     // the entire already-published catalog uninstallable. See plan.md §3.7.
-    if (!Manifest::requiresIconContract(manifest_.manifestVersion)) return;
+    if (!Manifest::requiresIconContract(manifest.manifestVersion)) return;
 
     // Icons are required for UI packages, which are the ones that render a
     // tile. Core modules appear in package lists but have no launcher or
     // sidebar presence, so an icon stays optional for them.
-    const bool iconRequired = (manifest_.type == "ui_qml");
+    const bool iconRequired = (manifest.type == "ui_qml");
 
-    if (manifest_.icon.empty()) {
+    if (manifest.icon.empty()) {
         if (iconRequired) {
             result.valid = false;
             result.errors.push_back(
                 std::string("Missing 'icon': ") + Manifest::ICON_PATH +
-                " is required for type '" + manifest_.type + "' packages");
+                " is required for type '" + manifest.type + "' packages");
         }
         return;
     }
@@ -77,35 +90,27 @@ void Package::validateIconAsset(VerifyResult& result) const {
     // host resolves <installDir>/assets/icon.png without consulting the
     // manifest, and the release tool globs for it. Allowing `icon` to point
     // anywhere would make both unpredictable.
-    if (manifest_.icon != Manifest::ICON_PATH) {
+    if (manifest.icon != Manifest::ICON_PATH) {
         result.valid = false;
         result.errors.push_back(
             std::string("Manifest 'icon' must be '") + Manifest::ICON_PATH +
-            "' at manifestVersion 0.4.0+, got '" + manifest_.icon + "'");
+            "' at manifestVersion 0.4.0+, got '" + manifest.icon + "'");
         return;
     }
 
-    const TarEntry* iconEntry = nullptr;
-    for (const auto& entry : entries_) {
-        if (entry.path == manifest_.icon && !entry.isDirectory) {
-            iconEntry = &entry;
-            break;
-        }
-    }
-
-    if (!iconEntry) {
+    if (!iconData) {
         result.valid = false;
         result.errors.push_back(
-            "Manifest 'icon' points at '" + manifest_.icon +
+            "Manifest 'icon' points at '" + manifest.icon +
             "' which is not present in the package");
         return;
     }
 
-    const PngHeader header = readPngHeader(iconEntry->data);
+    const PngHeader header = readPngHeader(*iconData);
     if (!header.valid) {
         result.valid = false;
         result.errors.push_back(
-            "Icon '" + manifest_.icon + "' does not match the Logos icon "
+            "Icon '" + manifest.icon + "' does not match the Logos icon "
             "standard: expected PNG, exactly 256x256; actual: not a PNG");
         return;
     }
@@ -114,7 +119,7 @@ void Package::validateIconAsset(VerifyResult& result) const {
     if (header.width != want || header.height != want) {
         result.valid = false;
         result.errors.push_back(
-            "Icon '" + manifest_.icon + "' does not match the Logos icon "
+            "Icon '" + manifest.icon + "' does not match the Logos icon "
             "standard: expected PNG, exactly 256x256; actual: PNG, " +
             std::to_string(header.width) + "x" + std::to_string(header.height));
     }

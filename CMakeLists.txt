@@ -88,6 +88,9 @@ add_library(lgx_core STATIC
     src/core/tar_reader.cpp
     src/core/manifest.cpp
     src/core/package.cpp
+    src/core/installed_package.cpp
+    src/core/platform_variant.cpp
+    src/core/main_resolution.cpp
     src/crypto/signing.cpp
     src/crypto/manifest_sig.cpp
     src/crypto/keyring.cpp
@@ -122,6 +125,9 @@ if(LGX_BUILD_SHARED)
         src/core/tar_reader.cpp
         src/core/manifest.cpp
         src/core/package.cpp
+    src/core/installed_package.cpp
+        src/core/platform_variant.cpp
+        src/core/main_resolution.cpp
         src/crypto/signing.cpp
         src/crypto/manifest_sig.cpp
         src/crypto/keyring.cpp

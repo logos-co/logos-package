@@ -91,6 +91,205 @@ LGX_EXPORT lgx_result_t lgx_save(lgx_package_t pkg, const char* path);
  */
 LGX_EXPORT lgx_verify_result_t lgx_verify(const char* path);
 
+/* Installed-package checks
+ *
+ * An installed package is one variant of a .lgx extracted into a directory,
+ * with manifest.json written beside it. Most of lgx_verify()'s work describes
+ * ARCHIVE SHAPE -- the variants/ layout, the root-entry whitelist, per-entry
+ * tar path rules -- and none of that survives extraction. What survives is
+ * what the manifest says about the package, plus whether the files are still
+ * the ones it covers. These expose it, so a caller holding an installed
+ * directory runs the same code lgx_verify does.
+ */
+
+/**
+ * Validate a manifest's own rules, over the exact bytes: every field/type gate
+ * the parser applies plus every rule Manifest::validate() enforces.
+ *
+ * No directory is involved, which is the point -- a catalog validating a
+ * fetched manifest is the second caller.
+ *
+ * @param manifest_bytes Manifest JSON. Not NUL-dependent.
+ * @param manifest_len   Length of manifest_bytes in bytes
+ * @return Verification result. Free with lgx_free_verify_result().
+ */
+LGX_EXPORT lgx_verify_result_t lgx_manifest_validate(
+    const char* manifest_bytes, size_t manifest_len);
+
+/* Whether an installed directory still holds the bytes the manifest covers. */
+typedef enum {
+    /* Every file in the tree answers to a hash the manifest declares: the
+       variant leaf, plus hashes["assets"] where the package has root assets. */
+    LGX_INTEGRITY_OK = 0,
+    /* It does not. Definitive: content was added, removed or altered. */
+    LGX_INTEGRITY_MISMATCH = 1,
+    /* The manifest declares no hash for this variant. Nothing was proved and
+       nothing was disproved -- a pre-hashes package, or the wrong variant. */
+    LGX_INTEGRITY_NO_HASH = 2,
+    /* The check could not run: the directory or a file in it was unreadable,
+       or the crypto library failed to initialise. Also not a verdict. */
+    LGX_INTEGRITY_UNREADABLE = 3,
+    /* The CALLER's input is unusable -- no directory, no variant, or a
+       manifest that does not parse. Distinct from NO_HASH so a typo'd variant
+       cannot read as "this package simply has no hash" and be waved through,
+       the same fail-open LGX_SIG_CHECK_BAD_DID exists to avoid. */
+    LGX_INTEGRITY_BAD_INPUT = 4
+} lgx_integrity_t;
+
+/**
+ * Recompute hashes["variants/<variant>"] over an installed directory.
+ *
+ * The primitive that exists nowhere else: lgx_verify() checks the archive's
+ * "root" hash, which covers every variant and the whole tar, and an install
+ * has neither. Content paths were hashed relative to variants/<v>/, which is
+ * exactly the flattened installed layout; manifest.json, manifest.sig and the
+ * installer's `variant` file are skipped.
+ *
+ * Root-level assets extract into that same directory but answer to
+ * hashes["assets"], so where a package has them BOTH hashes must come out
+ * right -- otherwise deleting them would look like a package that had none.
+ *
+ * @param dir_path       The installed package directory
+ * @param manifest_bytes manifest.json bytes, exactly as read from that directory
+ * @param manifest_len   Length of manifest_bytes in bytes
+ * @param variant        The installed variant, e.g. from the `variant` file.
+ *                       Required: only this variant's files are on disk.
+ * @return an lgx_integrity_t; only LGX_INTEGRITY_OK means verified.
+ *         lgx_get_last_error() carries a human-readable reason otherwise.
+ */
+LGX_EXPORT lgx_integrity_t lgx_verify_installed_tree(
+    const char* dir_path,
+    const char* manifest_bytes, size_t manifest_len,
+    const char* variant);
+
+/**
+ * Every check that survives installation, in one call: the manifest rules of
+ * lgx_manifest_validate(), the integrity of lgx_verify_installed_tree(),
+ * whether main[variant] and (for ui_qml) `view` resolve, and the icon
+ * contract. Errors read the same as the ones `lgx verify` prints.
+ *
+ * Signature checking is deliberately NOT here: it needs manifest.sig and a DID
+ * the caller pins, which is lgx_check_manifest_signature().
+ *
+ * @param dir_path       The installed package directory
+ * @param manifest_bytes manifest.json bytes, exactly as read from that directory
+ * @param manifest_len   Length of manifest_bytes in bytes
+ * @param variant        The installed variant
+ * @return Verification result. Free with lgx_free_verify_result().
+ */
+LGX_EXPORT lgx_verify_result_t lgx_verify_installed(
+    const char* dir_path,
+    const char* manifest_bytes, size_t manifest_len,
+    const char* variant);
+
+/* Variant names
+ *
+ * A variant name, "<os>-<architecture>", is a key inside the SIGNED hash tree
+ * (hashes["variants/<name>"]), so a published package can never be renamed on
+ * disk and disagreeing producer spellings have to be reconciled on read. This
+ * library owns that vocabulary; consumers ask rather than tabulate.
+ */
+
+/**
+ * The variant this build of the library targets, e.g. "darwin-arm64".
+ *
+ * Compile-time and reads nothing. "unknown" on a target with no rule.
+ *
+ * @return Static storage owned by the library. Do NOT free.
+ */
+LGX_EXPORT const char* lgx_host_variant(void);
+
+/**
+ * `variant` first, then every other live spelling of its ARCHITECTURE half:
+ * the list to walk when looking for one platform's variant in a package.
+ *
+ * Only the architecture is aliased. Matching the OS half verbatim is what
+ * keeps a Windows package from installing as a macOS one. An architecture with
+ * no known alias yields the input alone.
+ *
+ * @param variant A variant name, e.g. lgx_host_variant()
+ * @return NULL-terminated array, canonical caller spelling first.
+ *         Free with lgx_free_string_array(). Empty (a bare NULL terminator)
+ *         for NULL or an empty `variant`.
+ */
+LGX_EXPORT const char** lgx_variant_spellings(const char* variant);
+
+/* Resolving a manifest's `main` against an installed directory */
+
+typedef enum {
+    /* The manifest named a main and that file is in the directory. */
+    LGX_MAIN_RESOLVED = 0,
+    /* The manifest declares no `main` at all. Normal for a QML-only ui_qml
+       package, and broken for everything else -- which is the CALLER's rule
+       to apply, not this one's. */
+    LGX_MAIN_NOT_DECLARED = 1,
+    /* `main` is neither a variant map nor a string, or the entry that matched
+       names nothing usable: an empty or non-string value, a path that escapes
+       the directory, or a path naming a directory rather than a file. */
+    LGX_MAIN_MALFORMED_ENTRY = 2,
+    /* `main` is a variant map and no candidate variant is a key of it. The
+       package is for other platforms than the ones asked about. */
+    LGX_MAIN_NO_VARIANT_MATCH = 3,
+    /* `main` named a file that is not in the directory. Kept apart from
+       NO_VARIANT_MATCH: this install is for another variant, which is a
+       different repair from "this package has no main". */
+    LGX_MAIN_FILE_MISSING = 4,
+    /* The CALLER's input is unusable: no dir_path, or manifest bytes that are
+       not a JSON object. Nothing was said about the package. */
+    LGX_MAIN_BAD_INPUT = 5
+} lgx_main_resolution_t;
+
+/* Where the manifest's `main` resolved to, and why not when it did not.
+   Every pointer is NULL when it does not apply, so an unresolved main can
+   never be read as a usable path. */
+typedef struct {
+    lgx_main_resolution_t state;
+    const char* path;          /* absolute, native separators; NULL unless RESOLVED */
+    const char* declared_path; /* the relative path the manifest named, or NULL */
+    const char* variant;       /* the `main` key that selected it, or NULL */
+    const char* error;         /* why, or NULL when RESOLVED */
+} lgx_main_file_t;
+
+/**
+ * Resolve `main` for the first of `variants` the manifest names.
+ *
+ * THIS TOUCHES THE DISK, and has to: whether the declared path stays inside
+ * the package and whether it is a file rather than a directory cannot be
+ * answered from the manifest text. A directory that is not there simply
+ * contains no main.
+ *
+ * The first candidate variant that is a key of `main` wins OUTRIGHT and does
+ * NOT fall through to a later one when its named file is missing. A key whose
+ * value is empty or not a string DOES fall through, and is reported as
+ * MALFORMED_ENTRY only if nothing later matches.
+ *
+ * Variant keys are matched verbatim -- a directory is read as it was written.
+ *
+ * @param dir_path       The installed package directory
+ * @param manifest_bytes manifest.json bytes, exactly as read. Not
+ *                       NUL-dependent. Parsed here rather than taken as a
+ *                       validated manifest because `main` also has a
+ *                       plain-string form the manifest parser rejects.
+ * @param manifest_len   Length of manifest_bytes in bytes
+ * @param variants       NULL-terminated array of candidate variant spellings,
+ *                       most preferred first, e.g. from
+ *                       lgx_variant_spellings(). NULL or empty means no
+ *                       candidate, so a variant-map `main` yields
+ *                       NO_VARIANT_MATCH.
+ * @return the resolution. Free with lgx_free_main_file().
+ */
+LGX_EXPORT lgx_main_file_t lgx_resolve_main(
+    const char* dir_path,
+    const char* manifest_bytes, size_t manifest_len,
+    const char* const* variants);
+
+/**
+ * Free a main-file resolution.
+ *
+ * @param result Resolution to free
+ */
+LGX_EXPORT void lgx_free_main_file(lgx_main_file_t result);
+
 /* Package manipulation */
 
 /**

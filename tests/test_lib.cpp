@@ -3,6 +3,8 @@
 #include <filesystem>
 #include <fstream>
 #include <cstring>
+#include <string>
+#include <vector>
 
 class LibraryTest : public ::testing::Test {
 protected:
@@ -654,4 +656,424 @@ TEST_F(ManifestSignatureTest, AnEmptyMessageIsAMismatchNotAPass) {
               LGX_SIG_CHECK_MISMATCH);
     EXPECT_EQ(lgx_check_manifest_signature(nullptr, 99, sig.c_str(), didOf("pub").c_str()),
               LGX_SIG_CHECK_MISMATCH);
+}
+
+// ---------------------------------------------------------------------------
+// Installed-package checks
+//
+// The archive is gone by the time a module is installed: one variant, flattened
+// into a directory, with manifest.json and `variant` written beside it. These
+// exercise the C ABI a host holding such a directory calls.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// A NULL-terminated array the library owns; joined for substring assertions.
+std::string joinErrors(const lgx_verify_result_t& r) {
+    std::string out;
+    if (r.errors) {
+        for (size_t i = 0; r.errors[i]; ++i) out += std::string("\n  ") + r.errors[i];
+    }
+    return out;
+}
+
+bool hasError(const lgx_verify_result_t& r, const std::string& needle) {
+    if (!r.errors) return false;
+    for (size_t i = 0; r.errors[i]; ++i) {
+        if (std::string(r.errors[i]).find(needle) != std::string::npos) return true;
+    }
+    return false;
+}
+
+// A parseable manifest with `field` replaced, for the field-rule table.
+std::string manifestWith(const std::string& extra) {
+    return std::string(R"({"manifestVersion":"0.5.0","name":"pkg","version":"1.0.0",)"
+                       R"("description":"d","author":"a","type":"core",)"
+                       R"("category":"c","icon":"","dependencies":[])") +
+           extra + "}";
+}
+
+} // namespace
+
+class InstalledAbiTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        dir_ = std::filesystem::temp_directory_path() / "lgx_test_installed_abi";
+        std::filesystem::remove_all(dir_);
+        std::filesystem::create_directories(dir_ / "content" / "lib");
+        std::ofstream(dir_ / "content" / "payload.txt") << "hello";
+        std::ofstream(dir_ / "content" / "lib" / "dep.txt") << "dependency";
+    }
+    void TearDown() override { std::filesystem::remove_all(dir_); }
+
+    std::string makePackage(const std::string& name) {
+        auto path = (dir_ / (name + ".lgx")).string();
+        if (!lgx_create(path.c_str(), name.c_str()).success) return {};
+        lgx_package_t pkg = lgx_load(path.c_str());
+        if (!pkg) return {};
+        auto res = lgx_add_variant(pkg, "linux-x86_64",
+                                   (dir_ / "content").string().c_str(), "payload.txt");
+        if (res.success) res = lgx_save(pkg, path.c_str());
+        lgx_free_package(pkg);
+        return res.success ? path : std::string{};
+    }
+
+    // Install the way lgpm does: extract the variant, then write the root
+    // manifest.json and the `variant` file into the extracted directory.
+    std::filesystem::path install(const std::string& lgxPath,
+                                  const std::string& variant,
+                                  std::string& manifestOut) {
+        lgx_package_t pkg = lgx_load(lgxPath.c_str());
+        EXPECT_NE(pkg, nullptr);
+        if (!pkg) return {};
+        std::filesystem::path out = dir_ / "install";
+        EXPECT_TRUE(lgx_extract(pkg, variant.c_str(), out.string().c_str()).success);
+        const char* m = lgx_get_manifest_json(pkg);
+        manifestOut = m ? m : "";
+        lgx_free_package(pkg);
+
+        std::filesystem::path installed = out / variant;
+        std::ofstream(installed / "manifest.json", std::ios::binary) << manifestOut;
+        std::ofstream(installed / "variant") << variant;
+        return installed;
+    }
+
+    std::filesystem::path dir_;
+};
+
+TEST_F(InstalledAbiTest, ManifestValidateAcceptsAWellFormedManifest) {
+    const std::string m = manifestWith("");
+    lgx_verify_result_t r = lgx_manifest_validate(m.data(), m.size());
+    EXPECT_TRUE(r.valid) << joinErrors(r);
+    lgx_free_verify_result(r);
+}
+
+// Every rule Manifest::validate() carries, reported through the ABI with the
+// same wording `lgx verify` prints.
+TEST_F(InstalledAbiTest, ManifestValidateReportsEveryRule) {
+    struct Case { std::string manifest; std::string expected; };
+    const std::vector<Case> cases = {
+        {R"({"manifestVersion":"1.0.0","name":"p","version":"1.0.0","description":"d",)"
+         R"("author":"a","type":"core","category":"c","icon":"","dependencies":[]})",
+         "Unsupported manifest version: 1.0.0"},
+        {R"({"manifestVersion":"0.5.0","name":"","version":"1.0.0","description":"d",)"
+         R"("author":"a","type":"core","category":"c","icon":"","dependencies":[]})",
+         "'name' field is empty"},
+        {R"({"manifestVersion":"0.5.0","name":"p","version":"","description":"d",)"
+         R"("author":"a","type":"core","category":"c","icon":"","dependencies":[]})",
+         "'version' field is empty"},
+        {R"({"manifestVersion":"0.5.0","name":"p","version":"1.0","description":"d",)"
+         R"("author":"a","type":"core","category":"c","icon":"","dependencies":[]})",
+         "'version' is not a valid SemVer 2.0.0 version: '1.0'"},
+        {manifestWith(R"(,"main":{"linux-amd64":"../../etc/passwd"})"),
+         "Invalid main path for 'linux-amd64': Path contains '..' segment"},
+        {manifestWith(R"(,"view":"/abs/Main.qml")"),
+         "Invalid view path: Path is absolute"},
+        {R"({"manifestVersion":"0.5.0","name":"p","version":"1.0.0","description":"d",)"
+         R"("author":"a","type":"ui_qml","category":"c","icon":"","dependencies":[]})",
+         "'view' field is required for ui_qml packages"},
+        {manifestWith(R"(,"dependencies":[{"name":""}])"),
+         "Dependency with empty name"},
+        {manifestWith(R"(,"dependencies":[{"name":"Waku"}])"),
+         "Dependency name 'Waku' is not lowercase"},
+        {manifestWith(R"(,"dependencies":[{"name":"waku","version":"not-a-range"}])"),
+         "Dependency 'waku' has invalid semver range: 'not-a-range'"},
+        {manifestWith(R"(,"dependencies":[{"name":"waku","signer":"did:web:x"}])"),
+         "Dependency 'waku' has invalid signer DID: 'did:web:x'"},
+    };
+
+    for (const auto& c : cases) {
+        lgx_verify_result_t r = lgx_manifest_validate(c.manifest.data(), c.manifest.size());
+        EXPECT_FALSE(r.valid) << c.expected;
+        EXPECT_TRUE(hasError(r, "Manifest: " + c.expected))
+            << c.expected << " ->" << joinErrors(r);
+        lgx_free_verify_result(r);
+    }
+}
+
+TEST_F(InstalledAbiTest, ManifestValidateReportsParseFailures) {
+    const std::string notJson = "not json";
+    lgx_verify_result_t r = lgx_manifest_validate(notJson.data(), notJson.size());
+    EXPECT_FALSE(r.valid);
+    EXPECT_TRUE(hasError(r, "Failed to parse manifest")) << joinErrors(r);
+    lgx_free_verify_result(r);
+
+    const std::string noName =
+        R"({"manifestVersion":"0.5.0","version":"1.0.0","description":"d",)"
+        R"("author":"a","type":"core","category":"c","icon":"","dependencies":[]})";
+    r = lgx_manifest_validate(noName.data(), noName.size());
+    EXPECT_FALSE(r.valid);
+    EXPECT_TRUE(hasError(r, "Missing or invalid 'name' field")) << joinErrors(r);
+    lgx_free_verify_result(r);
+
+    r = lgx_manifest_validate(nullptr, 0);
+    EXPECT_FALSE(r.valid);
+    EXPECT_TRUE(hasError(r, "Missing manifest.json")) << joinErrors(r);
+    lgx_free_verify_result(r);
+}
+
+// The length governs, not a terminator: the bytes a caller carries come from a
+// file read, and the same bytes go to lgx_check_manifest_signature().
+TEST_F(InstalledAbiTest, ManifestValidateHonoursTheLength) {
+    std::string m = manifestWith("");
+    const size_t len = m.size();
+    m += "trailing garbage that is not JSON";
+
+    lgx_verify_result_t r = lgx_manifest_validate(m.data(), len);
+    EXPECT_TRUE(r.valid) << joinErrors(r);
+    lgx_free_verify_result(r);
+
+    r = lgx_manifest_validate(m.data(), m.size());
+    EXPECT_FALSE(r.valid);
+    lgx_free_verify_result(r);
+}
+
+TEST_F(InstalledAbiTest, VerifyInstalledAcceptsAnUntouchedInstall) {
+    auto path = makePackage("pkg");
+    ASSERT_FALSE(path.empty());
+    std::string manifest;
+    auto installed = install(path, "linux-x86_64", manifest);
+    ASSERT_FALSE(manifest.empty());
+
+    EXPECT_EQ(lgx_verify_installed_tree(installed.string().c_str(),
+                                        manifest.data(), manifest.size(),
+                                        "linux-x86_64"),
+              LGX_INTEGRITY_OK)
+        << lgx_get_last_error();
+
+    lgx_verify_result_t r = lgx_verify_installed(installed.string().c_str(),
+                                                 manifest.data(), manifest.size(),
+                                                 "linux-x86_64");
+    EXPECT_TRUE(r.valid) << joinErrors(r);
+    lgx_free_verify_result(r);
+}
+
+TEST_F(InstalledAbiTest, VerifyInstalledDetectsTampering) {
+    auto path = makePackage("pkg");
+    ASSERT_FALSE(path.empty());
+    std::string manifest;
+    auto installed = install(path, "linux-x86_64", manifest);
+    std::ofstream(installed / "lib" / "dep.txt", std::ios::binary) << "dependencY";
+
+    EXPECT_EQ(lgx_verify_installed_tree(installed.string().c_str(),
+                                        manifest.data(), manifest.size(),
+                                        "linux-x86_64"),
+              LGX_INTEGRITY_MISMATCH);
+
+    lgx_verify_result_t r = lgx_verify_installed(installed.string().c_str(),
+                                                 manifest.data(), manifest.size(),
+                                                 "linux-x86_64");
+    EXPECT_FALSE(r.valid);
+    EXPECT_TRUE(hasError(r, "Content hash mismatch")) << joinErrors(r);
+    lgx_free_verify_result(r);
+}
+
+// Four non-Ok answers, four different remedies. Collapsing any of them into
+// "not verified" would let a caller treat a typo as a clean package.
+TEST_F(InstalledAbiTest, TheIntegrityAnswersAreDistinct) {
+    auto path = makePackage("pkg");
+    ASSERT_FALSE(path.empty());
+    std::string manifest;
+    auto installed = install(path, "linux-x86_64", manifest);
+    const std::string dir = installed.string();
+
+    EXPECT_EQ(lgx_verify_installed_tree(dir.c_str(), manifest.data(), manifest.size(),
+                                        "freebsd-x86"),
+              LGX_INTEGRITY_NO_HASH);
+    EXPECT_EQ(lgx_verify_installed_tree((dir + "-gone").c_str(),
+                                        manifest.data(), manifest.size(),
+                                        "linux-x86_64"),
+              LGX_INTEGRITY_UNREADABLE);
+    EXPECT_EQ(lgx_verify_installed_tree(dir.c_str(), manifest.data(), manifest.size(),
+                                        nullptr),
+              LGX_INTEGRITY_BAD_INPUT);
+    EXPECT_EQ(lgx_verify_installed_tree(nullptr, manifest.data(), manifest.size(),
+                                        "linux-x86_64"),
+              LGX_INTEGRITY_BAD_INPUT);
+    const std::string junk = "not json";
+    EXPECT_EQ(lgx_verify_installed_tree(dir.c_str(), junk.data(), junk.size(),
+                                        "linux-x86_64"),
+              LGX_INTEGRITY_BAD_INPUT);
+}
+
+TEST_F(InstalledAbiTest, VerifyInstalledReportsAMissingMain) {
+    auto path = makePackage("pkg");
+    ASSERT_FALSE(path.empty());
+    std::string manifest;
+    auto installed = install(path, "linux-x86_64", manifest);
+    std::filesystem::remove(installed / "payload.txt");
+
+    lgx_verify_result_t r = lgx_verify_installed(installed.string().c_str(),
+                                                 manifest.data(), manifest.size(),
+                                                 "linux-x86_64");
+    EXPECT_FALSE(r.valid);
+    EXPECT_TRUE(hasError(r, "main[linux-x86_64] points to non-existent file: payload.txt"))
+        << joinErrors(r);
+    lgx_free_verify_result(r);
+}
+
+TEST_F(InstalledAbiTest, VerifyInstalledRejectsUnusableInput) {
+    lgx_verify_result_t r = lgx_verify_installed(nullptr, "", 0, "linux-x86_64");
+    EXPECT_FALSE(r.valid);
+    EXPECT_TRUE(hasError(r, "dir_path cannot be NULL")) << joinErrors(r);
+    lgx_free_verify_result(r);
+
+    r = lgx_verify_installed("/tmp", nullptr, 0, "linux-x86_64");
+    EXPECT_FALSE(r.valid);
+    EXPECT_TRUE(hasError(r, "Missing manifest.json")) << joinErrors(r);
+    lgx_free_verify_result(r);
+}
+
+// =============================================================================
+// Variant names and `main` resolution across the C ABI
+//
+// The C++ side is covered by test_platform_variant.cpp and
+// test_main_resolution.cpp; what is at stake here is the ABI contract itself —
+// who owns which pointer, and that "not applicable" is NULL rather than "".
+// =============================================================================
+
+class VariantAbiTest : public ::testing::Test {
+protected:
+    std::vector<std::string> spellings(const char* variant) {
+        std::vector<std::string> out;
+        const char** array = lgx_variant_spellings(variant);
+        if (!array) return out;
+        for (const char** v = array; *v != nullptr; ++v) out.emplace_back(*v);
+        lgx_free_string_array(array);
+        return out;
+    }
+};
+
+TEST_F(VariantAbiTest, HostVariantIsStableStorage) {
+    const char* first = lgx_host_variant();
+    ASSERT_NE(first, nullptr);
+    EXPECT_FALSE(std::string(first).empty());
+    // Owned by the library, so a second call hands back the same storage and
+    // the caller never frees it.
+    EXPECT_EQ(first, lgx_host_variant());
+}
+
+TEST_F(VariantAbiTest, SpellingsLeadWithTheInputAndCarryItsAliases) {
+    EXPECT_EQ(spellings("darwin-x86_64"),
+              (std::vector<std::string>{"darwin-x86_64", "darwin-amd64"}));
+    EXPECT_EQ(spellings("linux-arm64"),
+              (std::vector<std::string>{"linux-arm64", "linux-aarch64"}));
+}
+
+TEST_F(VariantAbiTest, SpellingsOfNothingIsAnEmptyArrayNotNull) {
+    const char** array = lgx_variant_spellings(nullptr);
+    ASSERT_NE(array, nullptr);
+    EXPECT_EQ(array[0], nullptr);
+    lgx_free_string_array(array);
+
+    array = lgx_variant_spellings("");
+    ASSERT_NE(array, nullptr);
+    EXPECT_EQ(array[0], nullptr);
+    lgx_free_string_array(array);
+}
+
+class MainAbiTest : public ::testing::Test {
+protected:
+    std::filesystem::path dir;
+
+    void SetUp() override {
+        dir = std::filesystem::temp_directory_path() /
+              ("lgx_main_abi_" + std::to_string(::rand()));
+        std::filesystem::create_directories(dir);
+    }
+
+    void TearDown() override {
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+    }
+
+    void writeFile(const std::string& name, const std::string& content) {
+        std::ofstream f(dir / name, std::ios::binary);
+        f << content;
+    }
+};
+
+TEST_F(MainAbiTest, ResolvedCarriesEveryFieldAndFreesClean) {
+    writeFile("p.so", "ELF");
+    const std::string manifest = R"({"main":{"linux-amd64":"p.so"}})";
+    const char* variants[] = { "linux-amd64", nullptr };
+
+    lgx_main_file_t r = lgx_resolve_main(dir.string().c_str(),
+                                         manifest.data(), manifest.size(), variants);
+    EXPECT_EQ(r.state, LGX_MAIN_RESOLVED);
+    ASSERT_NE(r.path, nullptr);
+    EXPECT_EQ(std::string(r.path), (dir / "p.so").string());
+    ASSERT_NE(r.declared_path, nullptr);
+    EXPECT_STREQ(r.declared_path, "p.so");
+    ASSERT_NE(r.variant, nullptr);
+    EXPECT_STREQ(r.variant, "linux-amd64");
+    EXPECT_EQ(r.error, nullptr);
+    lgx_free_main_file(r);
+}
+
+TEST_F(MainAbiTest, AnUnresolvedMainCarriesNoPath) {
+    const std::string manifest = R"({"main":{"linux-amd64":"p.so"}})";
+    const char* variants[] = { "linux-amd64", nullptr };
+
+    lgx_main_file_t r = lgx_resolve_main(dir.string().c_str(),
+                                         manifest.data(), manifest.size(), variants);
+    EXPECT_EQ(r.state, LGX_MAIN_FILE_MISSING);
+    EXPECT_EQ(r.path, nullptr);
+    EXPECT_STREQ(r.declared_path, "p.so");
+    ASSERT_NE(r.error, nullptr);
+    lgx_free_main_file(r);
+}
+
+TEST_F(MainAbiTest, ANullVariantListIsNoVariantMatchNotACrash) {
+    const std::string manifest = R"({"main":{"linux-amd64":"p.so"}})";
+
+    lgx_main_file_t r = lgx_resolve_main(dir.string().c_str(),
+                                         manifest.data(), manifest.size(), nullptr);
+    EXPECT_EQ(r.state, LGX_MAIN_NO_VARIANT_MATCH);
+    EXPECT_EQ(r.path, nullptr);
+    lgx_free_main_file(r);
+}
+
+TEST_F(MainAbiTest, TheLengthIsHonouredNotTheNulByte) {
+    writeFile("p.so", "ELF");
+    // Trailing garbage past manifest_len must not be parsed.
+    const std::string manifest = R"({"main":"p.so"} trailing garbage)";
+    const size_t realLen = manifest.find('}') + 1;
+
+    lgx_main_file_t r = lgx_resolve_main(dir.string().c_str(),
+                                         manifest.data(), realLen, nullptr);
+    EXPECT_EQ(r.state, LGX_MAIN_RESOLVED);
+    lgx_free_main_file(r);
+}
+
+TEST_F(MainAbiTest, UnusableInputIsBadInputAndReachesTheLastError) {
+    lgx_main_file_t r = lgx_resolve_main(nullptr, "{}", 2, nullptr);
+    EXPECT_EQ(r.state, LGX_MAIN_BAD_INPUT);
+    EXPECT_EQ(r.path, nullptr);
+    ASSERT_NE(r.error, nullptr);
+    EXPECT_STREQ(lgx_get_last_error(), r.error);
+    lgx_free_main_file(r);
+
+    r = lgx_resolve_main(dir.string().c_str(), "{ not json", 10, nullptr);
+    EXPECT_EQ(r.state, LGX_MAIN_BAD_INPUT);
+    lgx_free_main_file(r);
+
+    r = lgx_resolve_main(dir.string().c_str(), nullptr, 0, nullptr);
+    EXPECT_EQ(r.state, LGX_MAIN_BAD_INPUT);
+    EXPECT_STREQ(r.error, "Missing manifest.json");
+    lgx_free_main_file(r);
+}
+
+TEST_F(MainAbiTest, TheContainmentGuardHoldsAcrossTheAbi) {
+    std::ofstream(dir.parent_path() / "outside.so", std::ios::binary) << "ELF";
+    const std::string manifest = R"({"main":"../outside.so"})";
+
+    lgx_main_file_t r = lgx_resolve_main(dir.string().c_str(),
+                                         manifest.data(), manifest.size(), nullptr);
+    EXPECT_EQ(r.state, LGX_MAIN_MALFORMED_ENTRY);
+    EXPECT_EQ(r.path, nullptr);
+    lgx_free_main_file(r);
+
+    std::error_code ec;
+    std::filesystem::remove(dir.parent_path() / "outside.so", ec);
 }

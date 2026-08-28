@@ -8,6 +8,9 @@ add_executable(lgx_tests
     test_tar_reader.cpp
     test_manifest.cpp
     test_package.cpp
+    test_installed.cpp
+    test_platform_variant.cpp
+    test_main_resolution.cpp
     test_crypto.cpp
     test_cli.cpp
     test_semver.cpp
