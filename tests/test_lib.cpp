@@ -923,3 +923,157 @@ TEST_F(InstalledAbiTest, VerifyInstalledRejectsUnusableInput) {
     EXPECT_TRUE(hasError(r, "Missing manifest.json")) << joinErrors(r);
     lgx_free_verify_result(r);
 }
+
+// =============================================================================
+// Variant names and `main` resolution across the C ABI
+//
+// The C++ side is covered by test_platform_variant.cpp and
+// test_main_resolution.cpp; what is at stake here is the ABI contract itself —
+// who owns which pointer, and that "not applicable" is NULL rather than "".
+// =============================================================================
+
+class VariantAbiTest : public ::testing::Test {
+protected:
+    std::vector<std::string> spellings(const char* variant) {
+        std::vector<std::string> out;
+        const char** array = lgx_variant_spellings(variant);
+        if (!array) return out;
+        for (const char** v = array; *v != nullptr; ++v) out.emplace_back(*v);
+        lgx_free_string_array(array);
+        return out;
+    }
+};
+
+TEST_F(VariantAbiTest, HostVariantIsStableStorage) {
+    const char* first = lgx_host_variant();
+    ASSERT_NE(first, nullptr);
+    EXPECT_FALSE(std::string(first).empty());
+    // Owned by the library, so a second call hands back the same storage and
+    // the caller never frees it.
+    EXPECT_EQ(first, lgx_host_variant());
+}
+
+TEST_F(VariantAbiTest, SpellingsLeadWithTheInputAndCarryItsAliases) {
+    EXPECT_EQ(spellings("darwin-x86_64"),
+              (std::vector<std::string>{"darwin-x86_64", "darwin-amd64"}));
+    EXPECT_EQ(spellings("linux-arm64"),
+              (std::vector<std::string>{"linux-arm64", "linux-aarch64"}));
+}
+
+TEST_F(VariantAbiTest, SpellingsOfNothingIsAnEmptyArrayNotNull) {
+    const char** array = lgx_variant_spellings(nullptr);
+    ASSERT_NE(array, nullptr);
+    EXPECT_EQ(array[0], nullptr);
+    lgx_free_string_array(array);
+
+    array = lgx_variant_spellings("");
+    ASSERT_NE(array, nullptr);
+    EXPECT_EQ(array[0], nullptr);
+    lgx_free_string_array(array);
+}
+
+class MainAbiTest : public ::testing::Test {
+protected:
+    std::filesystem::path dir;
+
+    void SetUp() override {
+        dir = std::filesystem::temp_directory_path() /
+              ("lgx_main_abi_" + std::to_string(::rand()));
+        std::filesystem::create_directories(dir);
+    }
+
+    void TearDown() override {
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+    }
+
+    void writeFile(const std::string& name, const std::string& content) {
+        std::ofstream f(dir / name, std::ios::binary);
+        f << content;
+    }
+};
+
+TEST_F(MainAbiTest, ResolvedCarriesEveryFieldAndFreesClean) {
+    writeFile("p.so", "ELF");
+    const std::string manifest = R"({"main":{"linux-amd64":"p.so"}})";
+    const char* variants[] = { "linux-amd64", nullptr };
+
+    lgx_main_file_t r = lgx_resolve_main(dir.string().c_str(),
+                                         manifest.data(), manifest.size(), variants);
+    EXPECT_EQ(r.state, LGX_MAIN_RESOLVED);
+    ASSERT_NE(r.path, nullptr);
+    EXPECT_EQ(std::string(r.path), (dir / "p.so").string());
+    ASSERT_NE(r.declared_path, nullptr);
+    EXPECT_STREQ(r.declared_path, "p.so");
+    ASSERT_NE(r.variant, nullptr);
+    EXPECT_STREQ(r.variant, "linux-amd64");
+    EXPECT_EQ(r.error, nullptr);
+    lgx_free_main_file(r);
+}
+
+TEST_F(MainAbiTest, AnUnresolvedMainCarriesNoPath) {
+    const std::string manifest = R"({"main":{"linux-amd64":"p.so"}})";
+    const char* variants[] = { "linux-amd64", nullptr };
+
+    lgx_main_file_t r = lgx_resolve_main(dir.string().c_str(),
+                                         manifest.data(), manifest.size(), variants);
+    EXPECT_EQ(r.state, LGX_MAIN_FILE_MISSING);
+    EXPECT_EQ(r.path, nullptr);
+    EXPECT_STREQ(r.declared_path, "p.so");
+    ASSERT_NE(r.error, nullptr);
+    lgx_free_main_file(r);
+}
+
+TEST_F(MainAbiTest, ANullVariantListIsNoVariantMatchNotACrash) {
+    const std::string manifest = R"({"main":{"linux-amd64":"p.so"}})";
+
+    lgx_main_file_t r = lgx_resolve_main(dir.string().c_str(),
+                                         manifest.data(), manifest.size(), nullptr);
+    EXPECT_EQ(r.state, LGX_MAIN_NO_VARIANT_MATCH);
+    EXPECT_EQ(r.path, nullptr);
+    lgx_free_main_file(r);
+}
+
+TEST_F(MainAbiTest, TheLengthIsHonouredNotTheNulByte) {
+    writeFile("p.so", "ELF");
+    // Trailing garbage past manifest_len must not be parsed.
+    const std::string manifest = R"({"main":"p.so"} trailing garbage)";
+    const size_t realLen = manifest.find('}') + 1;
+
+    lgx_main_file_t r = lgx_resolve_main(dir.string().c_str(),
+                                         manifest.data(), realLen, nullptr);
+    EXPECT_EQ(r.state, LGX_MAIN_RESOLVED);
+    lgx_free_main_file(r);
+}
+
+TEST_F(MainAbiTest, UnusableInputIsBadInputAndReachesTheLastError) {
+    lgx_main_file_t r = lgx_resolve_main(nullptr, "{}", 2, nullptr);
+    EXPECT_EQ(r.state, LGX_MAIN_BAD_INPUT);
+    EXPECT_EQ(r.path, nullptr);
+    ASSERT_NE(r.error, nullptr);
+    EXPECT_STREQ(lgx_get_last_error(), r.error);
+    lgx_free_main_file(r);
+
+    r = lgx_resolve_main(dir.string().c_str(), "{ not json", 10, nullptr);
+    EXPECT_EQ(r.state, LGX_MAIN_BAD_INPUT);
+    lgx_free_main_file(r);
+
+    r = lgx_resolve_main(dir.string().c_str(), nullptr, 0, nullptr);
+    EXPECT_EQ(r.state, LGX_MAIN_BAD_INPUT);
+    EXPECT_STREQ(r.error, "Missing manifest.json");
+    lgx_free_main_file(r);
+}
+
+TEST_F(MainAbiTest, TheContainmentGuardHoldsAcrossTheAbi) {
+    std::ofstream(dir.parent_path() / "outside.so", std::ios::binary) << "ELF";
+    const std::string manifest = R"({"main":"../outside.so"})";
+
+    lgx_main_file_t r = lgx_resolve_main(dir.string().c_str(),
+                                         manifest.data(), manifest.size(), nullptr);
+    EXPECT_EQ(r.state, LGX_MAIN_MALFORMED_ENTRY);
+    EXPECT_EQ(r.path, nullptr);
+    lgx_free_main_file(r);
+
+    std::error_code ec;
+    std::filesystem::remove(dir.parent_path() / "outside.so", ec);
+}

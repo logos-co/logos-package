@@ -9,6 +9,8 @@
 #include "core/package.h"
 #include "core/manifest.h"
 #include "core/installed_package.h"
+#include "core/main_resolution.h"
+#include "core/platform_variant.h"
 #include "crypto/signing.h"
 #include "crypto/keyring.h"
 #include "logos/semver.hpp"
@@ -262,6 +264,87 @@ LGX_EXPORT lgx_verify_result_t lgx_verify_installed(
 
     return to_c_verify_result(
         lgx::verifyInstalled(dir_path, *manifest, variant ? variant : ""));
+}
+
+/* Variant names */
+
+LGX_EXPORT const char* lgx_host_variant(void) {
+    /* Static, so the caller never frees it: the value is compile-time. */
+    static const std::string host = lgx::hostVariant();
+    return host.c_str();
+}
+
+LGX_EXPORT const char** lgx_variant_spellings(const char* variant) {
+    clear_error();
+    return vector_to_array(lgx::variantSpellings(variant ? variant : ""));
+}
+
+/* Resolving a manifest's `main` */
+
+namespace {
+
+lgx_main_resolution_t to_c_main_resolution(lgx::MainResolution state) {
+    switch (state) {
+        case lgx::MainResolution::Resolved:       return LGX_MAIN_RESOLVED;
+        case lgx::MainResolution::NotDeclared:    return LGX_MAIN_NOT_DECLARED;
+        case lgx::MainResolution::MalformedEntry: return LGX_MAIN_MALFORMED_ENTRY;
+        case lgx::MainResolution::NoVariantMatch: return LGX_MAIN_NO_VARIANT_MATCH;
+        case lgx::MainResolution::FileMissing:    return LGX_MAIN_FILE_MISSING;
+        case lgx::MainResolution::BadInput:       return LGX_MAIN_BAD_INPUT;
+    }
+    return LGX_MAIN_BAD_INPUT;
+}
+
+/* NULL rather than "" for every field that does not apply, so a caller cannot
+   read an unresolved main as a usable empty path. */
+const char* own_or_null(const std::string& value) {
+    return value.empty() ? nullptr : strdup_cpp(value);
+}
+
+} // namespace
+
+LGX_EXPORT lgx_main_file_t lgx_resolve_main(
+    const char* dir_path,
+    const char* manifest_bytes, size_t manifest_len,
+    const char* const* variants) {
+
+    clear_error();
+    if (!manifest_bytes) {
+        /* Same wording as the other installed-package entry points, so a
+           caller comparing errors sees one vocabulary. */
+        set_error("Missing manifest.json");
+        return { LGX_MAIN_BAD_INPUT, nullptr, nullptr, nullptr,
+                 strdup_cpp("Missing manifest.json") };
+    }
+
+    std::vector<std::string> candidates;
+    if (variants) {
+        for (const char* const* v = variants; *v != nullptr; ++v) {
+            candidates.emplace_back(*v);
+        }
+    }
+
+    const lgx::MainFile resolved = lgx::resolveMain(
+        dir_path ? std::filesystem::path(dir_path) : std::filesystem::path(),
+        std::string(manifest_bytes, manifest_len),
+        candidates);
+
+    if (!resolved.error.empty()) set_error(resolved.error);
+
+    lgx_main_file_t out;
+    out.state = to_c_main_resolution(resolved.state);
+    out.path = own_or_null(resolved.path);
+    out.declared_path = own_or_null(resolved.declaredPath);
+    out.variant = own_or_null(resolved.variant);
+    out.error = own_or_null(resolved.error);
+    return out;
+}
+
+LGX_EXPORT void lgx_free_main_file(lgx_main_file_t result) {
+    free(const_cast<char*>(result.path));
+    free(const_cast<char*>(result.declared_path));
+    free(const_cast<char*>(result.variant));
+    free(const_cast<char*>(result.error));
 }
 
 /* Package manipulation */

@@ -34,6 +34,9 @@ logos-package/
 │   └── core/                   # Core library
 │       ├── package.cpp/h       # High-level package operations
 │       ├── manifest.cpp/h      # Manifest JSON handling
+│       ├── installed_package.cpp/h # Checks over an EXTRACTED package directory
+│       ├── platform_variant.cpp/h  # Variant-name vocabulary: host name + spellings
+│       ├── main_resolution.cpp/h   # Resolve `main` against an installed directory
 │       ├── tar_writer.cpp/h    # Deterministic tar creation
 │       ├── tar_reader.cpp/h    # Tar extraction/reading
 │       ├── gzip_handler.cpp/h  # Deterministic gzip
@@ -45,6 +48,9 @@ logos-package/
 │   ├── test_package.cpp        # Package operation tests
 │   ├── test_crypto.cpp         # Crypto tests (base64url, DID, ManifestSig, Keyring, signing)
 │   ├── test_manifest.cpp       # Manifest handling tests
+│   ├── test_installed.cpp      # Installed-directory check tests
+│   ├── test_platform_variant.cpp # Variant-spelling table tests
+│   ├── test_main_resolution.cpp  # `main` resolution tests
 │   ├── test_tar_reader.cpp     # Tar reader tests
 │   ├── test_tar_writer.cpp     # Tar writer tests
 │   ├── test_gzip_handler.cpp   # Gzip handler tests
@@ -224,6 +230,33 @@ The limit is configurable two ways:
 | `verifySignature() → SignatureInfo` | Verify signature and package integrity |
 | `validatePackage() → Result` | Validate structure and content hashes |
 
+### PlatformVariant
+
+**Files:** `src/core/platform_variant.cpp`, `src/core/platform_variant.h`
+
+**Purpose:** The variant-name vocabulary. A variant name is a key inside the
+signed hash tree (`hashes["variants/<name>"]`), so a published package can
+never be renamed on disk and disagreeing producer spellings are reconciled on
+read. Consumers ask here rather than keeping their own table.
+
+| Function | Description |
+|----------|-------------|
+| `hostVariant() → string` | The variant this build targets, e.g. `darwin-arm64` (compile-time) |
+| `variantSpellings(variant) → vector<string>` | `variant` first, then every other live spelling of its ARCHITECTURE half. The OS half is matched verbatim, which is what keeps a Windows package from installing as a macOS one |
+
+### MainResolution
+
+**Files:** `src/core/main_resolution.cpp`, `src/core/main_resolution.h`
+
+**Purpose:** Resolve a manifest's `main` to a file in an installed directory.
+Parses the raw manifest bytes rather than a `Manifest`, because `main` also has
+a plain-string form that `Manifest::fromJson` rejects. Touches the disk: the
+containment and file-ness rules cannot be answered from the manifest text.
+
+| Function | Description |
+|----------|-------------|
+| `resolveMain(dir, manifestBytes, variants) → MainFile` | First candidate variant that is a key of `main` wins outright and does NOT fall through when its file is missing; an empty or non-string value DOES fall through. Reports `Resolved`, `NotDeclared`, `MalformedEntry`, `NoVariantMatch`, `FileMissing` or `BadInput` |
+
 ## C API Library
 
 **Files:** `src/lgx.h`, `src/lib.cpp`
@@ -276,10 +309,19 @@ The header file `src/lgx.h` is installed to `include/` when using `make install`
 - `lgx_verify_installed_tree(dir_path, manifest_bytes, manifest_len, variant) → lgx_integrity_t` - Recompute `hashes["variants/<variant>"]` from the files on disk, and `hashes["assets"]` too where the package has root assets
 - `lgx_verify_installed(dir_path, manifest_bytes, manifest_len, variant) → lgx_verify_result_t` - Manifest rules + tree integrity + main/view resolution + the icon contract (free with `lgx_free_verify_result`)
 
+**Variant Names** (the vocabulary; see `src/core/platform_variant.h`):
+- `lgx_host_variant() → const char*` - The variant this build targets, e.g. `darwin-arm64` (static storage, do NOT free)
+- `lgx_variant_spellings(variant) → const char**` - `variant` first, then every other live spelling of its ARCHITECTURE half; the OS half is matched verbatim so a Windows package cannot install as a macOS one (free with `lgx_free_string_array`)
+
+**Main Resolution** (touches the disk; see `src/core/main_resolution.h`):
+- `lgx_resolve_main(dir_path, manifest_bytes, manifest_len, variants) → lgx_main_file_t` - Resolve `main` for the first candidate variant the manifest names, against an installed directory. Reports six distinct states rather than one empty path; refuses a `main` that escapes the directory or names a directory (free with `lgx_free_main_file`)
+- `lgx_free_main_file(result)` - Free a main-file resolution
+
 **Memory Management:**
 - `lgx_free_package(pkg)` - Free a package handle
 - `lgx_free_string_array(array)` - Free string array returned by library functions
 - `lgx_free_verify_result(result)` - Free verification result structure
+- `lgx_free_main_file(result)` - Free a main-file resolution
 
 **Signing and Verification:**
 - `lgx_sign(lgx_path, secret_key_path, signer_name, signer_url) → lgx_result_t` - Sign a package

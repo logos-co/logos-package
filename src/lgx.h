@@ -182,6 +182,114 @@ LGX_EXPORT lgx_verify_result_t lgx_verify_installed(
     const char* manifest_bytes, size_t manifest_len,
     const char* variant);
 
+/* Variant names
+ *
+ * A variant name, "<os>-<architecture>", is a key inside the SIGNED hash tree
+ * (hashes["variants/<name>"]), so a published package can never be renamed on
+ * disk and disagreeing producer spellings have to be reconciled on read. This
+ * library owns that vocabulary; consumers ask rather than tabulate.
+ */
+
+/**
+ * The variant this build of the library targets, e.g. "darwin-arm64".
+ *
+ * Compile-time and reads nothing. "unknown" on a target with no rule.
+ *
+ * @return Static storage owned by the library. Do NOT free.
+ */
+LGX_EXPORT const char* lgx_host_variant(void);
+
+/**
+ * `variant` first, then every other live spelling of its ARCHITECTURE half:
+ * the list to walk when looking for one platform's variant in a package.
+ *
+ * Only the architecture is aliased. Matching the OS half verbatim is what
+ * keeps a Windows package from installing as a macOS one. An architecture with
+ * no known alias yields the input alone.
+ *
+ * @param variant A variant name, e.g. lgx_host_variant()
+ * @return NULL-terminated array, canonical caller spelling first.
+ *         Free with lgx_free_string_array(). Empty (a bare NULL terminator)
+ *         for NULL or an empty `variant`.
+ */
+LGX_EXPORT const char** lgx_variant_spellings(const char* variant);
+
+/* Resolving a manifest's `main` against an installed directory */
+
+typedef enum {
+    /* The manifest named a main and that file is in the directory. */
+    LGX_MAIN_RESOLVED = 0,
+    /* The manifest declares no `main` at all. Normal for a QML-only ui_qml
+       package, and broken for everything else -- which is the CALLER's rule
+       to apply, not this one's. */
+    LGX_MAIN_NOT_DECLARED = 1,
+    /* `main` is neither a variant map nor a string, or the entry that matched
+       names nothing usable: an empty or non-string value, a path that escapes
+       the directory, or a path naming a directory rather than a file. */
+    LGX_MAIN_MALFORMED_ENTRY = 2,
+    /* `main` is a variant map and no candidate variant is a key of it. The
+       package is for other platforms than the ones asked about. */
+    LGX_MAIN_NO_VARIANT_MATCH = 3,
+    /* `main` named a file that is not in the directory. Kept apart from
+       NO_VARIANT_MATCH: this install is for another variant, which is a
+       different repair from "this package has no main". */
+    LGX_MAIN_FILE_MISSING = 4,
+    /* The CALLER's input is unusable: no dir_path, or manifest bytes that are
+       not a JSON object. Nothing was said about the package. */
+    LGX_MAIN_BAD_INPUT = 5
+} lgx_main_resolution_t;
+
+/* Where the manifest's `main` resolved to, and why not when it did not.
+   Every pointer is NULL when it does not apply, so an unresolved main can
+   never be read as a usable path. */
+typedef struct {
+    lgx_main_resolution_t state;
+    const char* path;          /* absolute, native separators; NULL unless RESOLVED */
+    const char* declared_path; /* the relative path the manifest named, or NULL */
+    const char* variant;       /* the `main` key that selected it, or NULL */
+    const char* error;         /* why, or NULL when RESOLVED */
+} lgx_main_file_t;
+
+/**
+ * Resolve `main` for the first of `variants` the manifest names.
+ *
+ * THIS TOUCHES THE DISK, and has to: whether the declared path stays inside
+ * the package and whether it is a file rather than a directory cannot be
+ * answered from the manifest text. A directory that is not there simply
+ * contains no main.
+ *
+ * The first candidate variant that is a key of `main` wins OUTRIGHT and does
+ * NOT fall through to a later one when its named file is missing. A key whose
+ * value is empty or not a string DOES fall through, and is reported as
+ * MALFORMED_ENTRY only if nothing later matches.
+ *
+ * Variant keys are matched verbatim -- a directory is read as it was written.
+ *
+ * @param dir_path       The installed package directory
+ * @param manifest_bytes manifest.json bytes, exactly as read. Not
+ *                       NUL-dependent. Parsed here rather than taken as a
+ *                       validated manifest because `main` also has a
+ *                       plain-string form the manifest parser rejects.
+ * @param manifest_len   Length of manifest_bytes in bytes
+ * @param variants       NULL-terminated array of candidate variant spellings,
+ *                       most preferred first, e.g. from
+ *                       lgx_variant_spellings(). NULL or empty means no
+ *                       candidate, so a variant-map `main` yields
+ *                       NO_VARIANT_MATCH.
+ * @return the resolution. Free with lgx_free_main_file().
+ */
+LGX_EXPORT lgx_main_file_t lgx_resolve_main(
+    const char* dir_path,
+    const char* manifest_bytes, size_t manifest_len,
+    const char* const* variants);
+
+/**
+ * Free a main-file resolution.
+ *
+ * @param result Resolution to free
+ */
+LGX_EXPORT void lgx_free_main_file(lgx_main_file_t result);
+
 /* Package manipulation */
 
 /**
