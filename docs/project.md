@@ -271,6 +271,11 @@ The header file `src/lgx.h` is installed to `include/` when using `make install`
 - `lgx_set_icon(pkg, icon)` - Set package icon path
 - `lgx_get_manifest_json(pkg) → const char*` - Get the full manifest as a JSON string (owned by library)
 
+**Installed-Package Checks** (a variant extracted into a directory, manifest.json beside it):
+- `lgx_manifest_validate(manifest_bytes, manifest_len) → lgx_verify_result_t` - Validate a manifest's own rules over exact bytes (free with `lgx_free_verify_result`)
+- `lgx_verify_installed_tree(dir_path, manifest_bytes, manifest_len, variant) → lgx_integrity_t` - Recompute `hashes["variants/<variant>"]` from the files on disk
+- `lgx_verify_installed(dir_path, manifest_bytes, manifest_len, variant) → lgx_verify_result_t` - Manifest rules + tree integrity + main/view resolution + the icon contract (free with `lgx_free_verify_result`)
+
 **Memory Management:**
 - `lgx_free_package(pkg)` - Free a package handle
 - `lgx_free_string_array(array)` - Free string array returned by library functions
