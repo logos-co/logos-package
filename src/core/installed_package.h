@@ -43,11 +43,14 @@ enum class InstalledIntegrity {
  * paths were hashed relative to `variants/<v>/`, which is exactly the
  * flattened installed layout, so no re-prefixing is involved.
  *
- * Both readings of `assets/` are tried, because extraction puts root-level
- * assets (covered by hashes["assets"]) in the same directory as variant files
- * (covered by the variant leaf) and nothing then tells them apart by path. The
- * second reading only counts if what it excluded matches hashes["assets"], so
- * every file still answers to exactly one declared hash.
+ * Extraction puts root-level assets (covered by hashes["assets"]) in the same
+ * directory as variant files (covered by the variant leaf), and nothing then
+ * tells them apart by path, so which is which is guessed. A guess only counts
+ * once BOTH declared hashes come out right, which is what stops a deleted root
+ * asset from reading as a package that never had one. The guesses are the
+ * canonical icon alone and the whole of `assets/`; a hand-built archive that
+ * mixes other root assets with a variant's own is refused rather than
+ * approximated.
  *
  * @param detail Optional; receives a human-readable reason on a non-Ok result
  */

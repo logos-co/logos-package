@@ -3,6 +3,7 @@
 #include "core/installed_package.h"
 #include "core/manifest.h"
 #include "core/package.h"
+#include "crypto/signing.h"
 
 #include <filesystem>
 #include <fstream>
@@ -309,6 +310,72 @@ TEST_F(InstalledTest, AnInstallWithBothRootAndVariantAssetsIsAccepted) {
     fs::path dir = install(*pkg, "linux-amd64");
     EXPECT_EQ(verifyInstalledTree(dir, pkg->getManifest(), "linux-amd64"),
               InstalledIntegrity::Ok);
+}
+
+// hashes["assets"] is the only record that root assets ever existed. If the
+// reading that counts every file as variant content were allowed to stand on
+// its own, deleting them would look exactly like a package that never had any.
+TEST_F(InstalledTest, ADeletedRootAssetIsRejected) {
+    auto pkg = makeUiQmlPackage();
+    fs::path dir = install(pkg, "linux-amd64");
+    ASSERT_TRUE(fs::exists(dir / "assets" / "icon.png"));
+    fs::remove_all(dir / "assets");
+
+    EXPECT_EQ(verifyInstalledTree(dir, pkg.getManifest(), "linux-amd64"),
+              InstalledIntegrity::Mismatch);
+}
+
+// A variant may ship its own assets/ alongside the root icon. Those files are
+// variant content, so splitting on the assets/ prefix wholesale would call an
+// untouched install tampered.
+TEST_F(InstalledTest, AVariantsOwnAssetsAreNotMistakenForRootAssets) {
+    fs::path pkgPath = tempDir / "mixed.lgx";
+    ASSERT_TRUE(Package::create(pkgPath, "testui").success);
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    pkg->getManifest().type = "ui_qml";
+    pkg->getManifest().view = "qml/Main.qml";
+    ASSERT_TRUE(pkg->setIcon(lgx_test::makePng()).success);
+
+    fs::path payload = tempDir / "mixedpayload";
+    writeFile(payload / "qml" / "Main.qml", "import QtQuick\nItem {}");
+    writeFile(payload / "assets" / "logo.svg", "<svg/>");
+    ASSERT_TRUE(pkg->addVariant("linux-amd64", payload).success);
+
+    fs::path dir = install(*pkg, "linux-amd64");
+    ASSERT_TRUE(fs::exists(dir / "assets" / "icon.png"));
+    ASSERT_TRUE(fs::exists(dir / "assets" / "logo.svg"));
+
+    EXPECT_EQ(verifyInstalledTree(dir, pkg->getManifest(), "linux-amd64"),
+              InstalledIntegrity::Ok);
+}
+
+// The Logos toolchain only ever writes the canonical icon to the package root,
+// so this stands in for a hand-built archive that put a second file there: the
+// manifest declares both, and both have to be read back out of the variant.
+TEST_F(InstalledTest, RootAssetsBeyondTheIconAreStillAccounted) {
+    auto pkg = makeUiQmlPackage();
+    fs::path dir = install(pkg, "linux-amd64");
+    const std::string extra = "a second root asset";
+    writeFile(dir / "assets" / "extra.txt", extra);
+
+    std::ifstream iconFile(dir / "assets" / "icon.png", std::ios::binary);
+    std::vector<uint8_t> icon((std::istreambuf_iterator<char>(iconFile)),
+                              std::istreambuf_iterator<char>());
+
+    Manifest m = pkg.getManifest();
+    m.hashes["assets"] = crypto::computeLeafHash({
+        {"icon.png", crypto::sha256Hex(icon)},
+        {"extra.txt", crypto::sha256Hex(
+            std::vector<uint8_t>(extra.begin(), extra.end()))},
+    });
+
+    EXPECT_EQ(verifyInstalledTree(dir, m, "linux-amd64"), InstalledIntegrity::Ok);
+
+    // ...and the wider reading still has to prove every byte.
+    writeFile(dir / "assets" / "extra.txt", "tampered");
+    EXPECT_EQ(verifyInstalledTree(dir, m, "linux-amd64"),
+              InstalledIntegrity::Mismatch);
 }
 
 // --- manifest rules, main, view, icon -------------------------------------

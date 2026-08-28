@@ -34,7 +34,6 @@ bool readFileBytes(const fs::path& path, std::vector<uint8_t>& out) {
 // hash was computed over archive paths.
 struct Listing {
     std::vector<std::pair<std::string, std::string>> files;
-    bool sawAssets = false;
 };
 
 // Ok, or why not: NotFromAPackage is a statement about the TREE (nothing the
@@ -84,7 +83,6 @@ WalkResult collectListing(const fs::path& dir, Listing& out, std::string& error)
                 error = "Cannot read installed file: " + path.string();
                 return WalkResult::Unreadable;
             }
-            if (rel.rfind(kAssetsPrefix, 0) == 0) out.sawAssets = true;
             out.files.emplace_back(rel, crypto::sha256Hex(bytes));
         }
 
@@ -145,30 +143,59 @@ InstalledIntegrity verifyInstalledTree(const fs::path& dir,
             return InstalledIntegrity::Unreadable;
     }
 
-    if (crypto::computeLeafHash(listing.files) == declared->second) {
-        return InstalledIntegrity::Ok;
-    }
-
-    // The root-assets reading. See the header: after extraction a root asset
-    // and a variant asset are the same path, and only the manifest's own
-    // "assets" hash says the first kind ever existed. Reading them out of the
-    // variant means they must answer to that hash instead, or an installed
-    // icon would be the one file nothing covers.
     const auto declaredAssets = manifest.hashes.find("assets");
-    if (listing.sawAssets && declaredAssets != manifest.hashes.end()) {
-        std::vector<std::pair<std::string, std::string>> payload;
-        std::vector<std::pair<std::string, std::string>> assets;
-        for (const auto& f : listing.files) {
-            if (f.first.rfind(kAssetsPrefix, 0) == 0) {
-                assets.emplace_back(f.first.substr(strlen(kAssetsPrefix)), f.second);
-            } else {
-                payload.push_back(f);
-            }
-        }
-        if (crypto::computeLeafHash(std::move(payload)) == declared->second &&
-            crypto::computeLeafHash(std::move(assets)) == declaredAssets->second) {
+    const bool haveRootAssets = declaredAssets != manifest.hashes.end() &&
+                                !declaredAssets->second.empty();
+
+    // Nothing came from the package root, so every file on disk is variant
+    // content and there is only one reading.
+    if (!haveRootAssets) {
+        if (crypto::computeLeafHash(listing.files) == declared->second) {
             return InstalledIntegrity::Ok;
         }
+        setDetail(detail, "installed content does not match manifest hashes");
+        return InstalledIntegrity::Mismatch;
+    }
+
+    // Root assets exist, and extraction merged them into the same directory as
+    // the variant's own files. Which of the assets/ files came from the root
+    // has to be guessed -- but a guess only counts once hashes["assets"] comes
+    // out right, so a root asset that was deleted can no longer read as a
+    // package that never had one.
+    std::vector<std::pair<std::string, std::string>> underAssets, payload;
+    for (const auto& f : listing.files) {
+        if (f.first.rfind(kAssetsPrefix, 0) == 0) underAssets.push_back(f);
+        else payload.push_back(f);
+    }
+
+    // `iconOnly` narrows the guess to the canonical icon -- the only root asset
+    // the packaging API can write -- which is what leaves a variant's own
+    // assets/ in the payload where its hash expects them. The wider guess
+    // covers a hand-built archive that put every asset at the root.
+    auto accepts = [&](bool iconOnly) {
+        std::vector<std::pair<std::string, std::string>> assets, keptInPayload;
+        for (const auto& f : underAssets) {
+            if (!iconOnly || f.first == Manifest::ICON_PATH) {
+                assets.emplace_back(f.first.substr(strlen(kAssetsPrefix)), f.second);
+            } else {
+                keptInPayload.push_back(f);
+            }
+        }
+        if (crypto::computeLeafHash(assets) != declaredAssets->second) return false;
+
+        // Either the archive held these paths at the root only, or it held them
+        // in the variant too and the variant hash needs them counted as well.
+        auto variantReading = payload;
+        variantReading.insert(variantReading.end(), keptInPayload.begin(), keptInPayload.end());
+        if (crypto::computeLeafHash(variantReading) == declared->second) return true;
+
+        variantReading = payload;
+        variantReading.insert(variantReading.end(), underAssets.begin(), underAssets.end());
+        return crypto::computeLeafHash(variantReading) == declared->second;
+    };
+
+    if (accepts(true) || accepts(false)) {
+        return InstalledIntegrity::Ok;
     }
 
     setDetail(detail, "installed content does not match manifest hashes");

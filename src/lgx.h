@@ -118,7 +118,8 @@ LGX_EXPORT lgx_verify_result_t lgx_manifest_validate(
 
 /* Whether an installed directory still holds the bytes the manifest covers. */
 typedef enum {
-    /* The tree hashes to the manifest's value for this variant. */
+    /* Every file in the tree answers to a hash the manifest declares: the
+       variant leaf, plus hashes["assets"] where the package has root assets. */
     LGX_INTEGRITY_OK = 0,
     /* It does not. Definitive: content was added, removed or altered. */
     LGX_INTEGRITY_MISMATCH = 1,
@@ -143,6 +144,10 @@ typedef enum {
  * has neither. Content paths were hashed relative to variants/<v>/, which is
  * exactly the flattened installed layout; manifest.json, manifest.sig and the
  * installer's `variant` file are skipped.
+ *
+ * Root-level assets extract into that same directory but answer to
+ * hashes["assets"], so where a package has them BOTH hashes must come out
+ * right -- otherwise deleting them would look like a package that had none.
  *
  * @param dir_path       The installed package directory
  * @param manifest_bytes manifest.json bytes, exactly as read from that directory
