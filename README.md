@@ -219,9 +219,17 @@ lgx semver valid-range '>=1.0 <2.0'          # exit 0
 
 **Ranges are npm's dialect, not the spec's** — SemVer 2.0.0 defines precedence
 but says nothing about `^ ~ x * ||`. Supported: `^`, `~`, `=`, `>`, `>=`, `<`,
-`<=`, `x`/`X`/`*` wildcards, whitespace conjunction, `||` alternation. Hyphen
-ranges (`1.2.3 - 2.3.4`) are not supported and are rejected rather than
-misread.
+`<=`, `x`/`X`/`*` wildcards, hyphen ranges (`1.2.3 - 2.3.4`), whitespace
+conjunction, and `||` alternation. A bare `1` or `1.5` is a partial version and
+widens accordingly.
+
+```bash
+lgx semver satisfies 1.5.0 '1.2.3 - 2.3.4'   # exit 0 — inclusive at both ends
+lgx semver satisfies 2.3.5 '1.2.3 - 2.3.4'   # exit 1
+```
+
+Note the spaces: `1.2.3 - 2.3.4` is a range, while `1.2.3-2.3.4` is a single
+version whose pre-release is `2.3.4`.
 
 Also following npm: **a range never matches a pre-release unless the range
 itself names one at the same `major.minor.patch`.** So `^1.0.0` does *not* match
