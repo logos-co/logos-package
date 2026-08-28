@@ -220,6 +220,30 @@ TEST_F(MainResolutionTest, ADotSegmentThatStaysInsideStillResolves) {
     EXPECT_EQ(main.path, (moduleDir / "lib" / "p.so").string());
 }
 
+TEST_F(MainResolutionTest, NonNormalComponentsResolveAfterNormalising) {
+    // Containment is checked LEXICALLY, so "./sub/../plugin.so" normalises to
+    // "plugin.so" and resolves even though `sub` does not exist. lgpm's old
+    // fs::exists() on the raw path failed here. Deliberate: a lexical guard
+    // also refuses a `..` that would traverse a SYMLINKED intermediate out of
+    // the package, which the old check would have handed back for dlopen.
+    writeFile(moduleDir / "plugin.so", "ELF");
+
+    MainFile main = resolveMain(moduleDir, R"({"main":"./sub/../plugin.so"})", {});
+
+    EXPECT_EQ(main.state, MainResolution::Resolved);
+    EXPECT_FALSE(main.path.empty());
+}
+
+TEST_F(MainResolutionTest, NonNormalComponentsCannotEscape) {
+    // The same normalisation must not become a way out of the directory.
+    writeFile(tempDir / "outside_plugin.so", "ELF");
+
+    MainFile main = resolveMain(moduleDir, R"({"main":"./sub/../../outside_plugin.so"})", {});
+
+    EXPECT_EQ(main.state, MainResolution::MalformedEntry);
+    EXPECT_TRUE(main.path.empty());
+}
+
 TEST_F(MainResolutionTest, NamingADirectoryIsNotResolved) {
     // exists() is true for a directory, which would hand the caller a path it
     // can never load.
