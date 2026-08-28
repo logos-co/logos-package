@@ -253,6 +253,18 @@ public:
      */
     static std::string getLastError();
 
+    /**
+     * The Logos icon standard, over icon bytes the caller has already located.
+     *
+     * `iconData` is null when the icon is absent. Split out from the archive
+     * lookup because an installed package carries the same icon at the same
+     * relative path but on disk rather than in a tar, and the rule must not
+     * exist twice. See verifyInstalled() in installed_package.h.
+     */
+    static void validateIconContract(const Manifest& manifest,
+                                     const std::vector<uint8_t>* iconData,
+                                     VerifyResult& result);
+
 private:
     Manifest manifest_;
     std::vector<TarEntry> entries_;
@@ -262,12 +274,8 @@ private:
     static thread_local std::string lastError_;
     
     /**
-     * Validate the packaged icon asset against the Logos icon standard
-     * (PNG, exactly 256x256, at the manifest's `icon` path).
-     *
-     * No-op for manifests older than 0.4.0 — they predate the assets/ slot
-     * and legitimately carry `icon: ""`, so enforcing would break every
-     * already-published package. See Manifest::requiresIconContract().
+     * Locate the icon among the archive entries and apply
+     * validateIconContract() to it.
      */
     void validateIconAsset(VerifyResult& result) const;
 

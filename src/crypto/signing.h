@@ -5,6 +5,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace lgx {
@@ -79,6 +80,20 @@ std::string base64Encode(const uint8_t* data, size_t len);
  * @return decoded bytes, or nullopt on error
  */
 std::optional<std::vector<uint8_t>> base64Decode(const std::string& encoded);
+
+/**
+ * SHA-256 over a Merkle leaf listing: sorted by path, each entry emitted as
+ * path + '\0' + hex-file-hash + '\n'.
+ *
+ * Exposed because an INSTALLED package is the same listing read from a
+ * directory instead of from tar entries. Both readings must produce the same
+ * bytes, so both go through this one function.
+ *
+ * @param pathHashes (relative path, hex SHA-256 of contents) pairs, any order
+ * @return Hex-encoded SHA-256, or empty string if the listing is empty
+ */
+std::string computeLeafHash(
+    std::vector<std::pair<std::string, std::string>> pathHashes);
 
 /**
  * Compute Merkle-style hash for all files under a given archive path prefix.

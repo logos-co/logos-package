@@ -8,6 +8,7 @@
 #include "lgx.h"
 #include "core/package.h"
 #include "core/manifest.h"
+#include "core/installed_package.h"
 #include "crypto/signing.h"
 #include "crypto/keyring.h"
 #include "logos/semver.hpp"
@@ -15,6 +16,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <optional>
 #include <cstring>
 #include <filesystem>
 #include <algorithm>
@@ -146,6 +148,120 @@ LGX_EXPORT lgx_verify_result_t lgx_verify(const char* path) {
     c_result.warnings = result.warnings.empty() ? nullptr : vector_to_array(result.warnings);
     
     return c_result;
+}
+
+/* Installed-package checks */
+
+namespace {
+
+/* Turn a VerifyResult into the C shape. Shared by every verify entry point so
+   ownership stays uniform: lgx_free_verify_result() frees both arrays. */
+lgx_verify_result_t to_c_verify_result(const lgx::Package::VerifyResult& r) {
+    lgx_verify_result_t out;
+    out.valid = r.valid;
+    out.errors = r.errors.empty() ? nullptr : vector_to_array(r.errors);
+    out.warnings = r.warnings.empty() ? nullptr : vector_to_array(r.warnings);
+    return out;
+}
+
+lgx_verify_result_t verify_failure(const std::string& message) {
+    lgx::Package::VerifyResult r;
+    r.valid = false;
+    r.errors.push_back(message);
+    return to_c_verify_result(r);
+}
+
+/* Parse the caller's bytes the way Package::load() does, so a malformed
+   manifest produces the message `lgx verify` already prints for one. */
+std::optional<lgx::Manifest> parse_manifest(
+    const char* bytes, size_t len, std::string& error) {
+    if (!bytes) {
+        error = "Missing manifest.json";
+        return std::nullopt;
+    }
+    auto m = lgx::Manifest::fromJson(std::string(bytes, len));
+    if (!m) {
+        error = "Failed to parse manifest: " + lgx::Manifest::getLastError();
+        return std::nullopt;
+    }
+    return m;
+}
+
+} // namespace
+
+LGX_EXPORT lgx_verify_result_t lgx_manifest_validate(
+    const char* manifest_bytes, size_t manifest_len) {
+
+    clear_error();
+    std::string error;
+    auto manifest = parse_manifest(manifest_bytes, manifest_len, error);
+    if (!manifest) {
+        set_error(error);
+        return verify_failure(error);
+    }
+
+    lgx::Package::VerifyResult result = lgx::Package::VerifyResult::ok();
+    auto validation = manifest->validate();
+    if (!validation.valid) {
+        result.valid = false;
+        for (const auto& err : validation.errors) {
+            result.errors.push_back("Manifest: " + err);
+        }
+    }
+    return to_c_verify_result(result);
+}
+
+LGX_EXPORT lgx_integrity_t lgx_verify_installed_tree(
+    const char* dir_path,
+    const char* manifest_bytes, size_t manifest_len,
+    const char* variant) {
+
+    clear_error();
+    if (!dir_path) {
+        set_error("Invalid argument: dir_path cannot be NULL");
+        return LGX_INTEGRITY_BAD_INPUT;
+    }
+    std::string error;
+    auto manifest = parse_manifest(manifest_bytes, manifest_len, error);
+    if (!manifest) {
+        set_error(error);
+        return LGX_INTEGRITY_BAD_INPUT;
+    }
+
+    std::string detail;
+    auto status = lgx::verifyInstalledTree(dir_path, *manifest,
+                                           variant ? variant : "", &detail);
+    if (!detail.empty()) set_error(detail);
+
+    switch (status) {
+        case lgx::InstalledIntegrity::Ok:         return LGX_INTEGRITY_OK;
+        case lgx::InstalledIntegrity::Mismatch:   return LGX_INTEGRITY_MISMATCH;
+        case lgx::InstalledIntegrity::NoHash:     return LGX_INTEGRITY_NO_HASH;
+        case lgx::InstalledIntegrity::Unreadable: return LGX_INTEGRITY_UNREADABLE;
+        case lgx::InstalledIntegrity::BadInput:   return LGX_INTEGRITY_BAD_INPUT;
+    }
+    return LGX_INTEGRITY_UNREADABLE;
+}
+
+LGX_EXPORT lgx_verify_result_t lgx_verify_installed(
+    const char* dir_path,
+    const char* manifest_bytes, size_t manifest_len,
+    const char* variant) {
+
+    clear_error();
+    if (!dir_path) {
+        set_error("Invalid argument: dir_path cannot be NULL");
+        return verify_failure(g_last_error);
+    }
+    std::string error;
+    auto manifest = parse_manifest(manifest_bytes, manifest_len, error);
+    if (!manifest) {
+        set_error(error);
+        return verify_failure(error);
+    }
+
+    return to_c_verify_result(
+        lgx::verifyInstalled(dir_path, *manifest, variant ? variant : ""));
 }
 
 /* Package manipulation */

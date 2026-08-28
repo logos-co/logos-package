@@ -91,6 +91,92 @@ LGX_EXPORT lgx_result_t lgx_save(lgx_package_t pkg, const char* path);
  */
 LGX_EXPORT lgx_verify_result_t lgx_verify(const char* path);
 
+/* Installed-package checks
+ *
+ * An installed package is one variant of a .lgx extracted into a directory,
+ * with manifest.json written beside it. Most of lgx_verify()'s work describes
+ * ARCHIVE SHAPE -- the variants/ layout, the root-entry whitelist, per-entry
+ * tar path rules -- and none of that survives extraction. What survives is
+ * what the manifest says about the package, plus whether the files are still
+ * the ones it covers. These expose it, so a caller holding an installed
+ * directory runs the same code lgx_verify does.
+ */
+
+/**
+ * Validate a manifest's own rules, over the exact bytes: every field/type gate
+ * the parser applies plus every rule Manifest::validate() enforces.
+ *
+ * No directory is involved, which is the point -- a catalog validating a
+ * fetched manifest is the second caller.
+ *
+ * @param manifest_bytes Manifest JSON. Not NUL-dependent.
+ * @param manifest_len   Length of manifest_bytes in bytes
+ * @return Verification result. Free with lgx_free_verify_result().
+ */
+LGX_EXPORT lgx_verify_result_t lgx_manifest_validate(
+    const char* manifest_bytes, size_t manifest_len);
+
+/* Whether an installed directory still holds the bytes the manifest covers. */
+typedef enum {
+    /* The tree hashes to the manifest's value for this variant. */
+    LGX_INTEGRITY_OK = 0,
+    /* It does not. Definitive: content was added, removed or altered. */
+    LGX_INTEGRITY_MISMATCH = 1,
+    /* The manifest declares no hash for this variant. Nothing was proved and
+       nothing was disproved -- a pre-hashes package, or the wrong variant. */
+    LGX_INTEGRITY_NO_HASH = 2,
+    /* The check could not run: the directory or a file in it was unreadable,
+       or the crypto library failed to initialise. Also not a verdict. */
+    LGX_INTEGRITY_UNREADABLE = 3,
+    /* The CALLER's input is unusable -- no directory, no variant, or a
+       manifest that does not parse. Distinct from NO_HASH so a typo'd variant
+       cannot read as "this package simply has no hash" and be waved through,
+       the same fail-open LGX_SIG_CHECK_BAD_DID exists to avoid. */
+    LGX_INTEGRITY_BAD_INPUT = 4
+} lgx_integrity_t;
+
+/**
+ * Recompute hashes["variants/<variant>"] over an installed directory.
+ *
+ * The primitive that exists nowhere else: lgx_verify() checks the archive's
+ * "root" hash, which covers every variant and the whole tar, and an install
+ * has neither. Content paths were hashed relative to variants/<v>/, which is
+ * exactly the flattened installed layout; manifest.json, manifest.sig and the
+ * installer's `variant` file are skipped.
+ *
+ * @param dir_path       The installed package directory
+ * @param manifest_bytes manifest.json bytes, exactly as read from that directory
+ * @param manifest_len   Length of manifest_bytes in bytes
+ * @param variant        The installed variant, e.g. from the `variant` file.
+ *                       Required: only this variant's files are on disk.
+ * @return an lgx_integrity_t; only LGX_INTEGRITY_OK means verified.
+ *         lgx_get_last_error() carries a human-readable reason otherwise.
+ */
+LGX_EXPORT lgx_integrity_t lgx_verify_installed_tree(
+    const char* dir_path,
+    const char* manifest_bytes, size_t manifest_len,
+    const char* variant);
+
+/**
+ * Every check that survives installation, in one call: the manifest rules of
+ * lgx_manifest_validate(), the integrity of lgx_verify_installed_tree(),
+ * whether main[variant] and (for ui_qml) `view` resolve, and the icon
+ * contract. Errors read the same as the ones `lgx verify` prints.
+ *
+ * Signature checking is deliberately NOT here: it needs manifest.sig and a DID
+ * the caller pins, which is lgx_check_manifest_signature().
+ *
+ * @param dir_path       The installed package directory
+ * @param manifest_bytes manifest.json bytes, exactly as read from that directory
+ * @param manifest_len   Length of manifest_bytes in bytes
+ * @param variant        The installed variant
+ * @return Verification result. Free with lgx_free_verify_result().
+ */
+LGX_EXPORT lgx_verify_result_t lgx_verify_installed(
+    const char* dir_path,
+    const char* manifest_bytes, size_t manifest_len,
+    const char* variant);
+
 /* Package manipulation */
 
 /**
