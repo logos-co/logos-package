@@ -67,12 +67,19 @@ struct ProvidedIntent {
 
 class Manifest {
 public:
-    // Current manifest version. Bumped to 0.5.0 for `provides`: the intents a
-    // package can service. It lives here, in the SIGNED manifest, rather than
-    // only in the unsigned metadata.json on disk, so the capability claim is
-    // covered by the package signature and is legible to a catalog before the
-    // package is installed. 0.2.x-0.4.x manifests are still readable.
-    static constexpr const char* CURRENT_VERSION = "0.5.0";
+    // Current manifest version. 0.5.0 added `provides`: the intents a package
+    // can service. It lives here, in the SIGNED manifest, rather than only in
+    // the unsigned metadata.json on disk, so the capability claim is covered by
+    // the package signature and is legible to a catalog before the package is
+    // installed.
+    //
+    // 0.6.0 adds `optional_dependencies` and `interface_dependencies` — the two
+    // things a package can name that are NOT part of a complete install. Both
+    // are additive and older readers ignore them, but widening 0.5.0 in place
+    // would leave two documents claiming one version with different key sets,
+    // which is a failure this workspace has already paid for once.
+    // 0.2.x-0.5.x manifests are still readable.
+    static constexpr const char* CURRENT_VERSION = "0.6.0";
 
     // Canonical in-package icon location for 0.4.0+. The author's
     // metadata.json path stays free-form; the bundler normalises to this.
@@ -119,6 +126,23 @@ public:
     std::string category;
     std::string icon;
     std::vector<Dependency> dependencies;
+
+    // Optional fields — absent in 0.4.0 and older packages, which is why they
+    // are not validated as required. See spec.md.
+
+    // Concrete modules the package can call but does not require. An installer
+    // may offer them; it must NOT report the package as broken when one is
+    // missing. Same on-disk forms as `dependencies`, so version ranges and
+    // signer pins carry across identically.
+    std::vector<Dependency> optionalDependencies;
+
+    // Interface contracts the module binds to a provider BY NAME at runtime.
+    // Names only: the `file` / `input` / `impl_class` an author writes in
+    // metadata.json are paths into flake inputs and a source tree, and mean
+    // nothing once the package is built. Nothing can resolve these to a
+    // package, so they are descriptive — for a catalog or a UI to show what a
+    // module expects to find.
+    std::vector<std::string> interfaceDependencies;
 
     // human-readable label; consumers fall back to `name` when unset.
     std::string displayName;

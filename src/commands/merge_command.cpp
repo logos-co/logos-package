@@ -143,6 +143,8 @@ int MergeCommand::execute(const std::vector<std::string>& args) {
     mergedManifest.view = refManifest.view;
     mergedManifest.dependencies = refManifest.dependencies;
     mergedManifest.provides = refManifest.provides;
+    mergedManifest.optionalDependencies = refManifest.optionalDependencies;
+    mergedManifest.interfaceDependencies = refManifest.interfaceDependencies;
 
     // Lift the root-level icon from the reference package. At
     // manifestVersion 0.4.0+ the icon is variant-independent and lives once

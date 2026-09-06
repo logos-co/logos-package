@@ -827,3 +827,571 @@ TEST(ManifestTest, CompareMetadata_MultipleDifferences) {
     EXPECT_FALSE(result.valid);
     EXPECT_GE(result.errors.size(), 3);
 }
+
+// =============================================================================
+// Object-form Dependency Tests
+//
+// A dependency entry is either a plain string (the legacy 0.2.x form) or an
+// object {name, version?, signer?}. Before these tests the object form had no
+// coverage at all: parsing, the type-error branches, the isSimple() 0.2.0
+// byte-compat serialisation branch, and every validate() rule on `version` /
+// `signer` / `name` were exercised only by the source itself.
+// =============================================================================
+
+// A syntactically well-formed did:jwk. The payload is the base64url JWK from
+// docs/spec.md; nothing here verifies the key, only the DID shape.
+static const char* VALID_DID =
+    "did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IjExcVlBWUt4Q3JmVlNfN"
+    "1R5V1FIT2c3aGN2UGFwaU1scndJYWFQY0hVUm8ifQ";
+
+// Build a manifest whose only interesting content is its dependencies array.
+static std::string manifestWithDeps(const std::string& depsArrayJson) {
+    return std::string(R"({
+      "manifestVersion": "0.3.0",
+      "name": "test",
+      "version": "1.0.0",
+      "description": "",
+      "author": "",
+      "type": "core",
+      "category": "",
+      "icon": "",
+      "dependencies": )") + depsArrayJson + R"(,
+      "main": {}
+    })";
+}
+
+// --- parsing: the three accepted shapes -------------------------------------
+
+TEST(ManifestDependencyTest, FromJson_MixedStringAndObjectForms) {
+    auto m = Manifest::fromJson(manifestWithDeps(
+        R"([
+          "plain_dep",
+          {"name": "ranged_dep", "version": "^1.2.0"},
+          {"name": "pinned_dep", "version": ">=0.5.0", "signer": ")" + std::string(VALID_DID) + R"("}
+        ])"));
+
+    ASSERT_TRUE(m.has_value()) << Manifest::getLastError();
+    ASSERT_EQ(m->dependencies.size(), 3u);
+
+    EXPECT_EQ(m->dependencies[0].name, "plain_dep");
+    EXPECT_FALSE(m->dependencies[0].version.has_value());
+    EXPECT_FALSE(m->dependencies[0].signer.has_value());
+    EXPECT_TRUE(m->dependencies[0].isSimple());
+
+    EXPECT_EQ(m->dependencies[1].name, "ranged_dep");
+    ASSERT_TRUE(m->dependencies[1].version.has_value());
+    EXPECT_EQ(*m->dependencies[1].version, "^1.2.0");
+    EXPECT_FALSE(m->dependencies[1].signer.has_value());
+    EXPECT_FALSE(m->dependencies[1].isSimple());
+
+    EXPECT_EQ(m->dependencies[2].name, "pinned_dep");
+    ASSERT_TRUE(m->dependencies[2].version.has_value());
+    EXPECT_EQ(*m->dependencies[2].version, ">=0.5.0");
+    ASSERT_TRUE(m->dependencies[2].signer.has_value());
+    EXPECT_EQ(*m->dependencies[2].signer, VALID_DID);
+    EXPECT_FALSE(m->dependencies[2].isSimple());
+}
+
+// {"name": x} with no other key is semantically identical to the bare string.
+TEST(ManifestDependencyTest, FromJson_NameOnlyObjectEqualsPlainString) {
+    auto obj = Manifest::fromJson(manifestWithDeps(R"([{"name": "dep"}])"));
+    auto str = Manifest::fromJson(manifestWithDeps(R"(["dep"])"));
+    ASSERT_TRUE(obj.has_value());
+    ASSERT_TRUE(str.has_value());
+    EXPECT_EQ(obj->dependencies, str->dependencies);
+    EXPECT_TRUE(obj->dependencies[0].isSimple());
+}
+
+TEST(ManifestDependencyTest, FromJson_SignerWithoutVersion) {
+    auto m = Manifest::fromJson(manifestWithDeps(
+        R"([{"name": "dep", "signer": ")" + std::string(VALID_DID) + R"("}])"));
+    ASSERT_TRUE(m.has_value()) << Manifest::getLastError();
+    ASSERT_EQ(m->dependencies.size(), 1u);
+    EXPECT_FALSE(m->dependencies[0].version.has_value());
+    ASSERT_TRUE(m->dependencies[0].signer.has_value());
+    EXPECT_FALSE(m->dependencies[0].isSimple());
+}
+
+// --- parsing: every type-error branch ---------------------------------------
+
+TEST(ManifestDependencyTest, FromJson_RejectsNonStringNonObjectEntry) {
+    for (const char* bad : {"[42]", "[[\"dep\"]]", "[null]", "[true]"}) {
+        auto m = Manifest::fromJson(manifestWithDeps(bad));
+        EXPECT_FALSE(m.has_value()) << "should reject dependencies " << bad;
+        EXPECT_NE(Manifest::getLastError().find("must be a string or object"),
+                  std::string::npos) << Manifest::getLastError();
+    }
+}
+
+TEST(ManifestDependencyTest, FromJson_RejectsObjectWithoutName) {
+    for (const char* bad : {R"([{"version": "^1.0.0"}])",
+                            R"([{"name": 42}])",
+                            R"([{"name": null}])",
+                            R"([{}])"}) {
+        auto m = Manifest::fromJson(manifestWithDeps(bad));
+        EXPECT_FALSE(m.has_value()) << "should reject dependencies " << bad;
+        EXPECT_NE(Manifest::getLastError().find("missing required 'name'"),
+                  std::string::npos) << Manifest::getLastError();
+    }
+}
+
+TEST(ManifestDependencyTest, FromJson_RejectsNonStringVersion) {
+    auto m = Manifest::fromJson(manifestWithDeps(R"([{"name": "dep", "version": 123}])"));
+    EXPECT_FALSE(m.has_value());
+    EXPECT_NE(Manifest::getLastError().find("has non-string 'version'"),
+              std::string::npos) << Manifest::getLastError();
+    // The name is interpolated into the message so the offender is identifiable.
+    EXPECT_NE(Manifest::getLastError().find("dep"), std::string::npos);
+}
+
+TEST(ManifestDependencyTest, FromJson_RejectsNonStringSigner) {
+    auto m = Manifest::fromJson(manifestWithDeps(R"([{"name": "dep", "signer": true}])"));
+    EXPECT_FALSE(m.has_value());
+    EXPECT_NE(Manifest::getLastError().find("has non-string 'signer'"),
+              std::string::npos) << Manifest::getLastError();
+}
+
+// Unknown keys are ignored rather than rejected, so a manifest written by a
+// newer tool still parses on an older one.
+TEST(ManifestDependencyTest, FromJson_IgnoresUnknownDependencyKeys) {
+    auto m = Manifest::fromJson(
+        manifestWithDeps(R"([{"name": "dep", "version": "^1.0.0", "future_field": {"a": 1}}])"));
+    ASSERT_TRUE(m.has_value()) << Manifest::getLastError();
+    ASSERT_EQ(m->dependencies.size(), 1u);
+    EXPECT_EQ(m->dependencies[0].name, "dep");
+    EXPECT_EQ(*m->dependencies[0].version, "^1.0.0");
+}
+
+// --- serialisation: the isSimple() 0.2.0 byte-compat branch ------------------
+
+// A name-only dependency must serialise back as a bare string so a 0.2.0
+// manifest that never used ranges round-trips byte-identically.
+TEST(ManifestDependencyTest, ToJson_SimpleDependenciesEmitAsPlainStrings) {
+    auto m = Manifest::fromJson(VALID_MANIFEST_JSON);
+    ASSERT_TRUE(m.has_value());
+
+    const std::string json = m->toJson();
+    EXPECT_NE(json.find(R"("dep1")"), std::string::npos) << json;
+    // No object form anywhere in the dependencies array.
+    EXPECT_EQ(json.find(R"("name": "dep1")"), std::string::npos) << json;
+}
+
+// ...and the object form survives as an object, keeping both optional fields.
+TEST(ManifestDependencyTest, ToJson_RoundtripPreservesVersionAndSigner) {
+    const std::string src = manifestWithDeps(
+        R"([
+          "plain_dep",
+          {"name": "ranged_dep", "version": "^1.2.0"},
+          {"name": "pinned_dep", "version": ">=0.5.0", "signer": ")" + std::string(VALID_DID) + R"("}
+        ])");
+
+    auto original = Manifest::fromJson(src);
+    ASSERT_TRUE(original.has_value()) << Manifest::getLastError();
+
+    auto parsed = Manifest::fromJson(original->toJson());
+    ASSERT_TRUE(parsed.has_value()) << Manifest::getLastError();
+
+    EXPECT_EQ(parsed->dependencies, original->dependencies);
+}
+
+// Serialisation is idempotent: a second pass changes nothing. This is what
+// makes `lgx add` on a package with object-form deps hash-stable.
+TEST(ManifestDependencyTest, ToJson_ObjectFormIsIdempotent) {
+    auto m = Manifest::fromJson(manifestWithDeps(
+        R"([{"name": "dep", "version": "^1.2.0", "signer": ")" + std::string(VALID_DID) + R"("}])"));
+    ASSERT_TRUE(m.has_value());
+
+    const std::string once = m->toJson();
+    auto reparsed = Manifest::fromJson(once);
+    ASSERT_TRUE(reparsed.has_value());
+    EXPECT_EQ(reparsed->toJson(), once);
+}
+
+// A name-only OBJECT normalises down to a string — the round-trip preserves
+// meaning, not bytes. Pinned so the narrowing stays deliberate.
+TEST(ManifestDependencyTest, ToJson_NameOnlyObjectNarrowsToString) {
+    auto m = Manifest::fromJson(manifestWithDeps(R"([{"name": "dep"}])"));
+    ASSERT_TRUE(m.has_value());
+
+    const std::string json = m->toJson();
+
+    // Look only inside the dependencies array — the manifest itself has a
+    // top-level "name" field that would otherwise match.
+    const size_t open = json.find("\"dependencies\"");
+    ASSERT_NE(open, std::string::npos) << json;
+    const size_t lo = json.find('[', open);
+    const size_t hi = json.find(']', lo);
+    ASSERT_NE(lo, std::string::npos);
+    ASSERT_NE(hi, std::string::npos);
+    const std::string depsArr = json.substr(lo, hi - lo + 1);
+
+    EXPECT_NE(depsArr.find(R"("dep")"), std::string::npos) << depsArr;
+    EXPECT_EQ(depsArr.find(R"("name")"), std::string::npos) << depsArr;
+}
+
+// A dependency carrying only a signer must NOT lose it on the way out — the
+// isSimple() check keys off both optionals, not just `version`.
+TEST(ManifestDependencyTest, ToJson_SignerOnlyDependencySurvives) {
+    auto m = Manifest::fromJson(manifestWithDeps(
+        R"([{"name": "dep", "signer": ")" + std::string(VALID_DID) + R"("}])"));
+    ASSERT_TRUE(m.has_value());
+
+    auto parsed = Manifest::fromJson(m->toJson());
+    ASSERT_TRUE(parsed.has_value());
+    ASSERT_EQ(parsed->dependencies.size(), 1u);
+    ASSERT_TRUE(parsed->dependencies[0].signer.has_value());
+    EXPECT_EQ(*parsed->dependencies[0].signer, VALID_DID);
+    EXPECT_FALSE(parsed->dependencies[0].version.has_value());
+}
+
+// --- validate(): the semver range rule --------------------------------------
+
+TEST(ManifestDependencyTest, Validate_AcceptsWellFormedRanges) {
+    for (const char* good : {"^1.2.0", "~1.2.3", ">=1.2 <2.0", "1.2.x", "*",
+                             "1.x", "^1.0.0 || ^2.0.0", "latest", "=1.0.0",
+                             ">=1.0.0-rc.1"}) {
+        Manifest m;
+        m.manifestVersion = "0.3.0";
+        m.name = "test";
+        m.version = "1.0.0";
+        m.dependencies.push_back(Dependency("dep"));
+        m.dependencies[0].version = good;
+
+        auto result = m.validate();
+        EXPECT_TRUE(result.valid) << "should accept range '" << good << "': "
+                                  << (result.errors.empty() ? "" : result.errors[0]);
+    }
+}
+
+TEST(ManifestDependencyTest, Validate_RejectsMalformedRanges) {
+    // Note "1.2.3 - 2.3.4": npm hyphen ranges are deliberately NOT supported.
+    // They are rejected outright rather than misread — see the matching case in
+    // test_semver.cpp. The rest previously slipped through a looser regex.
+    for (const char* bad : {"garbage!!", "", "1.2.3 - 2.3.4", "^1.0.0 ||",
+                            "1.2.3.4", "1.x.3", "x.1", "1..2"}) {
+        Manifest m;
+        m.manifestVersion = "0.3.0";
+        m.name = "test";
+        m.version = "1.0.0";
+        m.dependencies.push_back(Dependency("dep"));
+        m.dependencies[0].version = bad;
+
+        auto result = m.validate();
+        EXPECT_FALSE(result.valid) << "should reject range '" << bad << "'";
+        ASSERT_FALSE(result.errors.empty());
+        EXPECT_NE(result.errors[0].find("invalid semver range"), std::string::npos)
+            << result.errors[0];
+        // The offending dependency and the offending value are both named.
+        EXPECT_NE(result.errors[0].find("dep"), std::string::npos);
+    }
+}
+
+// An absent `version` means "any version" and must not be validated as if it
+// were an empty range (an empty range is invalid; an absent one is not).
+TEST(ManifestDependencyTest, Validate_AbsentVersionIsNotAnEmptyRange) {
+    Manifest m;
+    m.manifestVersion = "0.3.0";
+    m.name = "test";
+    m.version = "1.0.0";
+    m.dependencies.push_back(Dependency("dep"));   // version stays nullopt
+
+    auto result = m.validate();
+    EXPECT_TRUE(result.valid) << (result.errors.empty() ? "" : result.errors[0]);
+}
+
+// --- validate(): the signer DID rule ----------------------------------------
+
+TEST(ManifestDependencyTest, Validate_AcceptsWellFormedDid) {
+    Manifest m;
+    m.manifestVersion = "0.3.0";
+    m.name = "test";
+    m.version = "1.0.0";
+    m.dependencies.push_back(Dependency("dep"));
+    m.dependencies[0].signer = VALID_DID;
+
+    auto result = m.validate();
+    EXPECT_TRUE(result.valid) << (result.errors.empty() ? "" : result.errors[0]);
+}
+
+TEST(ManifestDependencyTest, Validate_RejectsMalformedDid) {
+    for (const char* bad : {"not-a-did",
+                            "",
+                            "did:pkh:eip155:1:0xabc",   // wrong DID method
+                            "did:jwk:",                 // empty payload
+                            "did:jwk:has spaces",
+                            "did:jwk:has/slash",        // not base64url
+                            "DID:JWK:abc"}) {           // scheme is case-sensitive
+        Manifest m;
+        m.manifestVersion = "0.3.0";
+        m.name = "test";
+        m.version = "1.0.0";
+        m.dependencies.push_back(Dependency("dep"));
+        m.dependencies[0].signer = bad;
+
+        auto result = m.validate();
+        EXPECT_FALSE(result.valid) << "should reject signer '" << bad << "'";
+        ASSERT_FALSE(result.errors.empty());
+        EXPECT_NE(result.errors[0].find("invalid signer DID"), std::string::npos)
+            << result.errors[0];
+    }
+}
+
+// --- validate(): the name rules ---------------------------------------------
+
+TEST(ManifestDependencyTest, Validate_RejectsEmptyDependencyName) {
+    Manifest m;
+    m.manifestVersion = "0.3.0";
+    m.name = "test";
+    m.version = "1.0.0";
+    m.dependencies.push_back(Dependency(""));
+
+    auto result = m.validate();
+    EXPECT_FALSE(result.valid);
+    ASSERT_FALSE(result.errors.empty());
+    EXPECT_NE(result.errors[0].find("empty name"), std::string::npos)
+        << result.errors[0];
+}
+
+// An empty name short-circuits with `continue`, so a bad range on the SAME
+// entry must not also be reported — one error per broken entry.
+TEST(ManifestDependencyTest, Validate_EmptyNameSuppressesOtherErrorsOnSameEntry) {
+    Manifest m;
+    m.manifestVersion = "0.3.0";
+    m.name = "test";
+    m.version = "1.0.0";
+    m.dependencies.push_back(Dependency(""));
+    m.dependencies[0].version = "garbage!!";
+
+    auto result = m.validate();
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.errors.size(), 1u);
+    EXPECT_NE(result.errors[0].find("empty name"), std::string::npos);
+}
+
+TEST(ManifestDependencyTest, Validate_RejectsNonLowercaseDependencyName) {
+    Manifest m;
+    m.manifestVersion = "0.3.0";
+    m.name = "test";
+    m.version = "1.0.0";
+    m.dependencies.push_back(Dependency("NotLowerCase"));
+
+    auto result = m.validate();
+    EXPECT_FALSE(result.valid);
+    ASSERT_FALSE(result.errors.empty());
+    EXPECT_NE(result.errors[0].find("is not lowercase"), std::string::npos)
+        << result.errors[0];
+}
+
+// Each broken dependency contributes its own error; they do not mask each other.
+TEST(ManifestDependencyTest, Validate_ReportsEveryBrokenDependency) {
+    Manifest m;
+    m.manifestVersion = "0.3.0";
+    m.name = "test";
+    m.version = "1.0.0";
+
+    m.dependencies.push_back(Dependency("bad_range"));
+    m.dependencies[0].version = "garbage!!";
+    m.dependencies.push_back(Dependency("bad_signer"));
+    m.dependencies[1].signer = "nope";
+    m.dependencies.push_back(Dependency("Uppercase"));
+    m.dependencies.push_back(Dependency("fine"));      // must NOT produce an error
+
+    auto result = m.validate();
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.errors.size(), 3u);
+}
+
+// --- Dependency value semantics ---------------------------------------------
+
+TEST(ManifestDependencyTest, Equality_DistinguishesVersionAndSigner) {
+    Dependency base("dep");
+
+    Dependency sameName("dep");
+    EXPECT_EQ(base, sameName);
+
+    Dependency ranged("dep");
+    ranged.version = "^1.0.0";
+    EXPECT_NE(base, ranged);
+
+    Dependency otherRange("dep");
+    otherRange.version = "^2.0.0";
+    EXPECT_NE(ranged, otherRange);
+
+    Dependency pinned("dep");
+    pinned.version = "^1.0.0";
+    pinned.signer = VALID_DID;
+    EXPECT_NE(ranged, pinned);
+
+    Dependency pinnedCopy("dep");
+    pinnedCopy.version = "^1.0.0";
+    pinnedCopy.signer = VALID_DID;
+    EXPECT_EQ(pinned, pinnedCopy);
+}
+
+TEST(ManifestDependencyTest, ToString_RendersConstraints) {
+    Dependency plain("dep");
+    EXPECT_EQ(plain.toString(), "dep");
+
+    Dependency ranged("dep");
+    ranged.version = "^1.2.0";
+    EXPECT_EQ(ranged.toString(), "dep ^1.2.0");
+
+    Dependency pinned("dep");
+    pinned.version = "^1.2.0";
+    pinned.signer = "did:jwk:abc";
+    EXPECT_EQ(pinned.toString(), "dep ^1.2.0 [signer=did:jwk:abc]");
+
+    Dependency signerOnly("dep");
+    signerOnly.signer = "did:jwk:abc";
+    EXPECT_EQ(signerOnly.toString(), "dep [signer=did:jwk:abc]");
+}
+
+// compareMetadata() must treat a changed CONSTRAINT as a difference, not just a
+// changed set of names — otherwise two variants of a package could be merged
+// while disagreeing about which version of a dependency they need.
+TEST(ManifestDependencyTest, CompareMetadata_DetectsDifferingConstraints) {
+    const std::string src = manifestWithDeps(R"([{"name": "dep", "version": "^1.0.0"}])");
+
+    auto a = Manifest::fromJson(src);
+    auto b = Manifest::fromJson(src);
+    ASSERT_TRUE(a.has_value());
+    ASSERT_TRUE(b.has_value());
+    EXPECT_TRUE(a->compareMetadata(*b).valid);
+
+    // Same name, different range.
+    b->dependencies[0].version = "^2.0.0";
+    auto result = a->compareMetadata(*b);
+    EXPECT_FALSE(result.valid);
+    ASSERT_FALSE(result.errors.empty());
+    EXPECT_NE(result.errors[0].find("dependencies"), std::string::npos);
+
+    // Same name and range, different signer pin.
+    b->dependencies[0].version = "^1.0.0";
+    b->dependencies[0].signer = VALID_DID;
+    EXPECT_FALSE(a->compareMetadata(*b).valid);
+}
+
+// A bare string and a name-only object are the SAME dependency, so a manifest
+// that merely rewrote its notation must not read as a metadata mismatch.
+TEST(ManifestDependencyTest, CompareMetadata_StringAndNameOnlyObjectMatch) {
+    auto a = Manifest::fromJson(manifestWithDeps(R"(["dep"])"));
+    auto b = Manifest::fromJson(manifestWithDeps(R"([{"name": "dep"}])"));
+    ASSERT_TRUE(a.has_value());
+    ASSERT_TRUE(b.has_value());
+
+    EXPECT_TRUE(a->compareMetadata(*b).valid);
+}
+
+// =============================================================================
+// optional_dependencies / interface_dependencies (manifestVersion 0.6.0)
+//
+// The two dependency kinds that are NOT the required closure. Both are absent
+// from every 0.5.0-and-earlier package, so the parse must treat "missing" as
+// "none declared" rather than as a validation failure.
+// =============================================================================
+
+static const char* MANIFEST_WITH_OPTIONAL_DEPS = R"({
+  "manifestVersion": "0.6.0",
+  "name": "consumer",
+  "version": "1.0.0",
+  "description": "Consumer",
+  "author": "Test",
+  "type": "library",
+  "category": "test",
+  "icon": "icon.png",
+  "dependencies": ["hard_dep"],
+  "optional_dependencies": ["opt_plain", {"name": "opt_ranged", "version": "^1.2.0"}],
+  "interface_dependencies": ["storage", "telemetry"],
+  "main": { "linux-amd64": "lib/test.so" }
+})";
+
+TEST(ManifestOptionalDepsTest, ParsesBothNewArrays) {
+    auto manifest = Manifest::fromJson(MANIFEST_WITH_OPTIONAL_DEPS);
+    ASSERT_TRUE(manifest.has_value());
+
+    // Required stays exactly what it was — the split is the whole point.
+    ASSERT_EQ(manifest->dependencies.size(), 1u);
+    EXPECT_EQ(manifest->dependencies[0].name, "hard_dep");
+
+    // Optional accepts both on-disk forms, constraints included.
+    ASSERT_EQ(manifest->optionalDependencies.size(), 2u);
+    EXPECT_EQ(manifest->optionalDependencies[0].name, "opt_plain");
+    EXPECT_TRUE(manifest->optionalDependencies[0].isSimple());
+    EXPECT_EQ(manifest->optionalDependencies[1].name, "opt_ranged");
+    ASSERT_TRUE(manifest->optionalDependencies[1].version.has_value());
+    EXPECT_EQ(*manifest->optionalDependencies[1].version, "^1.2.0");
+
+    EXPECT_EQ(manifest->interfaceDependencies,
+              (std::vector<std::string>{"storage", "telemetry"}));
+}
+
+TEST(ManifestOptionalDepsTest, OlderManifestWithoutTheKeysStaysValid) {
+    // VALID_MANIFEST_JSON is a 0.1.0 document declaring neither key.
+    auto manifest = Manifest::fromJson(VALID_MANIFEST_JSON);
+    ASSERT_TRUE(manifest.has_value());
+    EXPECT_TRUE(manifest->optionalDependencies.empty());
+    EXPECT_TRUE(manifest->interfaceDependencies.empty());
+    EXPECT_TRUE(manifest->validate().valid);
+}
+
+TEST(ManifestOptionalDepsTest, RoundTripsThroughJson) {
+    auto manifest = Manifest::fromJson(MANIFEST_WITH_OPTIONAL_DEPS);
+    ASSERT_TRUE(manifest.has_value());
+
+    auto reparsed = Manifest::fromJson(manifest->toJson());
+    ASSERT_TRUE(reparsed.has_value());
+    EXPECT_EQ(reparsed->optionalDependencies, manifest->optionalDependencies);
+    EXPECT_EQ(reparsed->interfaceDependencies, manifest->interfaceDependencies);
+}
+
+TEST(ManifestOptionalDepsTest, AbsentKeysAreNotEmitted) {
+    // A package declaring neither must serialize exactly as earlier tooling did,
+    // so existing packages do not churn when rebuilt.
+    auto manifest = Manifest::fromJson(VALID_MANIFEST_JSON);
+    ASSERT_TRUE(manifest.has_value());
+    const std::string out = manifest->toJson();
+    EXPECT_EQ(out.find("optional_dependencies"), std::string::npos);
+    EXPECT_EQ(out.find("interface_dependencies"), std::string::npos);
+}
+
+TEST(ManifestOptionalDepsTest, NonArrayIsRejected) {
+    const char* json = R"({
+      "manifestVersion": "0.6.0", "name": "x", "version": "1.0.0",
+      "description": "", "author": "", "type": "library", "category": "test",
+      "icon": "i.png", "dependencies": [], "optional_dependencies": "nope",
+      "main": {}
+    })";
+    EXPECT_FALSE(Manifest::fromJson(json).has_value());
+}
+
+TEST(ManifestOptionalDepsTest, InterfaceEntryMustBeAName) {
+    // The build-time object form ({name, file, impl_class}) is deliberately not
+    // accepted here: those paths mean nothing in a built package, and silently
+    // dropping them would make the manifest look like it carried information
+    // it did not.
+    const char* json = R"({
+      "manifestVersion": "0.6.0", "name": "x", "version": "1.0.0",
+      "description": "", "author": "", "type": "library", "category": "test",
+      "icon": "i.png", "dependencies": [],
+      "interface_dependencies": [{"name": "storage", "file": "storage.lidl"}],
+      "main": {}
+    })";
+    EXPECT_FALSE(Manifest::fromJson(json).has_value());
+}
+
+TEST(ManifestOptionalDepsTest, CompareMetadataCatchesAMismatch) {
+    // Non-variant fields: two builds of one package that disagree about what it
+    // can call are not two variants of the same package.
+    auto a = Manifest::fromJson(MANIFEST_WITH_OPTIONAL_DEPS);
+    auto b = Manifest::fromJson(MANIFEST_WITH_OPTIONAL_DEPS);
+    ASSERT_TRUE(a.has_value() && b.has_value());
+    EXPECT_TRUE(a->compareMetadata(*b).valid);
+
+    b->optionalDependencies.pop_back();
+    EXPECT_FALSE(a->compareMetadata(*b).valid);
+
+    auto c = Manifest::fromJson(MANIFEST_WITH_OPTIONAL_DEPS);
+    ASSERT_TRUE(c.has_value());
+    c->interfaceDependencies.clear();
+    EXPECT_FALSE(a->compareMetadata(*c).valid);
+}

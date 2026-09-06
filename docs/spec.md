@@ -55,11 +55,11 @@ package.lgx (tar.gz)
 
 ### Manifest Schema
 
-The current manifest schema is `0.5.0`. It is a UTF-8 encoded JSON file with the following required fields:
+The current manifest schema is `0.6.0`. It is a UTF-8 encoded JSON file with the following required fields:
 
 ```json
 {
-  "manifestVersion": "0.5.0",
+  "manifestVersion": "0.6.0",
   "name": "package-name",
   "version": "1.2.3",
   "description": "Package description",
@@ -95,11 +95,21 @@ The current manifest schema is `0.5.0`. It is a UTF-8 encoded JSON file with the
 | `category` | string | Package category | Classification |
 | `icon` | string | Relative path to the icon bundled in the package. At `0.4.0`+ this is `assets/icon.png` — see *Icon contract* below | Display/branding |
 | `dependencies` | array | List of dependency entries — see *Dependency entries* below | Runtime needs |
+| `optional_dependencies` | array | *Optional, 0.6.0+.* Dependency entries (same two forms) the package can call but does **not** require. An absent one is not a broken install | Runtime needs |
+| `interface_dependencies` | array of strings | *Optional, 0.6.0+.* Interface **names** the module binds to a provider at runtime. Not resolvable to a package | Display/discovery |
 | `main` | object | Map of variant name → relative path to entry point (e.g ) `"linux-amd64": "path/to/main.so"` means `linux-amd64/path/to/main.so` | Entry point resolution |
 | `display_name` | string | *Optional.* Human-readable label shown by UI consumers (Package Manager, App Manager) and CLI tools (`lm metadata`, `lgx manifest`). Falls back to `name` when absent. | Display/branding |
 | `provides` | array | *Optional.* Intents this package can service — see *Provided intents* below. Absent ⇒ the package services none. | Capability discovery |
 
-All fields except `display_name` and `provides` are required to ensure consistent metadata for hosts/registries and applications.
+All fields except `display_name`, `provides`, `optional_dependencies` and `interface_dependencies` are required to ensure consistent metadata for hosts/registries and applications. Each of those is omitted entirely when empty, so a package that uses none of them serialises exactly as earlier tooling produced it.
+
+#### Optional and interface dependencies
+
+These are the two things a module can name that are **not** part of a complete install.
+
+`optional_dependencies` entries take the same two forms as `dependencies` and are validated the same way. What differs is what an installer must do with them: it **may** offer to install one, and it **must not** report the package as broken when one is missing. The runtime never auto-loads them and never fails a load over their absence.
+
+`interface_dependencies` entries are bare **names**. An interface is bound to a concrete provider at runtime by the consuming module, so there is nothing here for an installer to resolve — the names are carried so a catalog or UI can show what a module expects to find. The author's `metadata.json` form is an object carrying `file` / `input` / `impl_class`; those are paths into flake inputs and a source tree and are dropped at bundle time, exactly as intent `params` are (only intent names reach the manifest). A manifest that carries the object form is rejected rather than silently truncated.
 
 #### Dependency entries
 
@@ -111,7 +121,26 @@ Each element of the `dependencies` array is one of:
   - `version` (string, optional) — npm/Cargo-style semver range (`^1.2.0`, `~1.2.3`, `>=1.2 <2.0`, `1.2.x`, `*`, `||` for alternatives, ...). Absent ⇒ any version.
   - `signer` (string, optional) — `did:jwk:...` DID identifying the trusted publisher. Absent ⇒ any signer. When set, only packages whose `manifest.sig` was produced by that DID match. Used to disambiguate same-named packages from different publishers.
 
-`lgx verify` syntactically validates that `version` parses as a semver range and that `signer` matches the `did:jwk:` shape. Semantic matching (does the constraint resolve to a real candidate?) is the responsibility of the resolver in `logos-package-downloader`.
+`lgx verify` syntactically validates each entry and fails the package on any of:
+
+| Rule | Error |
+|------|-------|
+| `name` is non-empty | `Dependency with empty name` |
+| `name` is canonical lowercase | `Dependency name '<n>' is not lowercase` |
+| `version`, when present, parses as a range | `Dependency '<n>' has invalid semver range: '<r>'` |
+| `signer`, when present, matches `^did:jwk:[A-Za-z0-9_-]+$` | `Dependency '<n>' has invalid signer DID: '<d>'` |
+
+An empty `name` short-circuits the remaining checks for that entry, so one broken entry yields one error.
+
+Ranges are the npm dialect **minus hyphen ranges**: `1.2.3 - 2.3.4` is rejected outright rather than
+misread as a version with a `-2.3.4` pre-release suffix. Use `>=1.2.3 <=2.3.4` instead. Note the
+converse is *not* rejected: `1.2.3-2.3.4` (no spaces) is a legal SemVer pre-release version and is
+accepted as an **exact** match on that pre-release — it does not denote a range.
+
+Semantic matching (does the constraint resolve to a real candidate?) is the responsibility of the
+resolver in `logos-package-downloader`. That resolver uses `signer` to *select* among same-named
+candidates; it is not an authorization check. Whether a package may be installed at all is decided
+separately by the installer's signature policy (see *Install-Time Verification (lgpm)*).
 
 #### Provided intents
 
@@ -146,14 +175,17 @@ against a registry nor checks that the payload implements them.
 
 #### Schema version compatibility
 
-Tooling reads `manifestVersion` `0.2.x` through `0.5.x`; packages produced by `lgx create`
-use `0.5.0`. Every field added across those versions is **optional**, so compatibility runs
+Tooling reads `manifestVersion` `0.2.x` through `0.6.x`; packages produced by `lgx create`
+use `0.6.0`. Every field added across those versions is **optional**, so compatibility runs
 both ways: an older client reading a newer manifest ignores what it does not recognize
 rather than failing, which is why the check is on the major version alone. A 0.2.0 manifest
 with plain-string dependencies round-trips unchanged through tooling — strings are emitted
 as strings, object-form entries are emitted as objects. Two contracts are gated on the minor
 version rather than applied retroactively: the *icon contract* (`0.4.0`+) and `provides`
-(`0.5.0`+). Bumping the major version (1.x.x) is reserved for future breaking changes.
+(`0.5.0`+). `0.6.0` adds `optional_dependencies` and `interface_dependencies`; the version
+was bumped rather than widening `0.5.0` in place, because two documents claiming one version
+with different key sets is a distinction nothing downstream can recover. Bumping the major
+version (1.x.x) is reserved for future breaking changes.
 
 ### Icon Contract
 
@@ -459,7 +491,7 @@ lgx merge <pkg1.lgx> <pkg2.lgx> ... [-o <output.lgx>] [--skip-duplicates] [-y]
 1. Verify all input package files exist; if any missing, exit with error
 2. Load all input packages
 3. Compare manifests across all inputs, ignoring the `main` field (which is variant-specific):
-   - All non-variant fields must be identical (`manifestVersion`, `name`, `version`, `description`, `author`, `type`, `category`, `icon`, `dependencies`, `display_name`)
+   - All non-variant fields must be identical (`manifestVersion`, `name`, `version`, `description`, `author`, `type`, `category`, `icon`, `dependencies`, `optional_dependencies`, `interface_dependencies`, `display_name`). Two builds that disagree about what a package can call are not two variants of one package
    - If any mismatch is found, report all mismatching fields and exit with error
 4. Check for duplicate variants across all input packages:
    - By default, exit with error if any variant appears in more than one input
@@ -696,6 +728,19 @@ Any operation that modifies package content:
 - `--require-signatures`: Reject unsigned packages and packages signed by untrusted keys
 
 Keyring management (adding/removing trusted keys) is handled separately via `lgx keyring` or the package-manager module's `addTrustedKey`/`removeTrustedKey`/`listTrustedKeys` API.
+
+**A dependency's `signer` pin is not a second trust anchor.** The two checks are distinct and both
+are required:
+
+| Check | Question | Where | Effect |
+|-------|----------|-------|--------|
+| Signature policy | *May this package be installed at all?* | `lgpm install` | Rejects a package no active trust anchor validates |
+| Dependency `signer` pin | *Which of these same-named candidates did the author mean?* | resolver in `logos-package-downloader` | Filters candidates; never grants install rights |
+
+A bare identifier, a manifest field, a catalog entry or a downloaded key does **not** establish a
+trust anchor. The pin narrows a choice inside the set the policy has already accepted; it can only
+ever reduce that set, never widen it. A package whose signer matches a dependency pin but whom no
+keyring entry trusts is still rejected under `--require-signatures`.
 
 ## Future Work
 
