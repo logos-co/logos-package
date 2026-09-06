@@ -102,41 +102,79 @@ std::optional<Manifest> Manifest::fromJson(const std::string& jsonStr) {
         }
         m.icon = j["icon"].get<std::string>();
 
+        // One reader for both dependency arrays. They accept the same two
+        // on-disk forms, and a second copy of this is how they would come to
+        // disagree about what an entry means.
+        auto readDependencies = [&](const json& arr,
+                                    std::vector<Dependency>& out) -> bool {
+            for (const auto& dep : arr) {
+                if (dep.is_string()) {
+                    // Legacy plain-string form: equivalent to { "name": <s> }
+                    out.push_back(Dependency(dep.get<std::string>()));
+                    continue;
+                }
+                if (!dep.is_object()) {
+                    lastError_ = "Invalid dependency entry (must be a string or object)";
+                    return false;
+                }
+                Dependency d;
+                if (!dep.contains("name") || !dep["name"].is_string()) {
+                    lastError_ = "Dependency object missing required 'name' field";
+                    return false;
+                }
+                d.name = dep["name"].get<std::string>();
+                if (dep.contains("version")) {
+                    if (!dep["version"].is_string()) {
+                        lastError_ = "Dependency '" + d.name + "' has non-string 'version'";
+                        return false;
+                    }
+                    d.version = dep["version"].get<std::string>();
+                }
+                if (dep.contains("signer")) {
+                    if (!dep["signer"].is_string()) {
+                        lastError_ = "Dependency '" + d.name + "' has non-string 'signer'";
+                        return false;
+                    }
+                    d.signer = dep["signer"].get<std::string>();
+                }
+                out.push_back(std::move(d));
+            }
+            return true;
+        };
+
         if (!j.contains("dependencies") || !j["dependencies"].is_array()) {
             lastError_ = "Missing or invalid 'dependencies' field";
             return std::nullopt;
         }
-        for (const auto& dep : j["dependencies"]) {
-            if (dep.is_string()) {
-                // Legacy plain-string form: equivalent to { "name": <s> }
-                m.dependencies.push_back(Dependency(dep.get<std::string>()));
-                continue;
-            }
-            if (!dep.is_object()) {
-                lastError_ = "Invalid dependency entry (must be a string or object)";
+        if (!readDependencies(j["dependencies"], m.dependencies))
+            return std::nullopt;
+
+        // 0.5.0+. Absent in every earlier package, so missing means "none
+        // declared" rather than a validation failure — requiring it would make
+        // every already-published package unreadable.
+        if (j.contains("optional_dependencies")) {
+            if (!j["optional_dependencies"].is_array()) {
+                lastError_ = "Invalid 'optional_dependencies' field (must be an array)";
                 return std::nullopt;
             }
-            Dependency d;
-            if (!dep.contains("name") || !dep["name"].is_string()) {
-                lastError_ = "Dependency object missing required 'name' field";
+            if (!readDependencies(j["optional_dependencies"], m.optionalDependencies))
+                return std::nullopt;
+        }
+
+        // Names only — an interface is bound to a provider at runtime, so there
+        // is nothing here for an installer to resolve.
+        if (j.contains("interface_dependencies")) {
+            if (!j["interface_dependencies"].is_array()) {
+                lastError_ = "Invalid 'interface_dependencies' field (must be an array)";
                 return std::nullopt;
             }
-            d.name = dep["name"].get<std::string>();
-            if (dep.contains("version")) {
-                if (!dep["version"].is_string()) {
-                    lastError_ = "Dependency '" + d.name + "' has non-string 'version'";
+            for (const auto& iface : j["interface_dependencies"]) {
+                if (!iface.is_string()) {
+                    lastError_ = "Invalid interface_dependencies entry (must be a string name)";
                     return std::nullopt;
                 }
-                d.version = dep["version"].get<std::string>();
+                m.interfaceDependencies.push_back(iface.get<std::string>());
             }
-            if (dep.contains("signer")) {
-                if (!dep["signer"].is_string()) {
-                    lastError_ = "Dependency '" + d.name + "' has non-string 'signer'";
-                    return std::nullopt;
-                }
-                d.signer = dep["signer"].get<std::string>();
-            }
-            m.dependencies.push_back(std::move(d));
         }
         
         // "main" — structurally optional here so empty packages and QML-only
@@ -231,19 +269,29 @@ std::string Manifest::toJson() const {
     // Dependencies: emit each entry in its minimal form. A purely
     // name-only dependency serialises as a plain string so packages that
     // never use semver ranges round-trip identically to the 0.2.0 schema.
-    json depsArr = json::array();
-    for (const auto& dep : dependencies) {
-        if (dep.isSimple()) {
-            depsArr.push_back(dep.name);
-        } else {
-            json depObj = json::object();
-            depObj["name"] = dep.name;
-            if (dep.version)  depObj["version"] = *dep.version;
-            if (dep.signer)   depObj["signer"]  = *dep.signer;
-            depsArr.push_back(std::move(depObj));
+    auto serializeDependencies = [](const std::vector<Dependency>& deps) {
+        json arr = json::array();
+        for (const auto& dep : deps) {
+            if (dep.isSimple()) {
+                arr.push_back(dep.name);
+            } else {
+                json depObj = json::object();
+                depObj["name"] = dep.name;
+                if (dep.version)  depObj["version"] = *dep.version;
+                if (dep.signer)   depObj["signer"]  = *dep.signer;
+                arr.push_back(std::move(depObj));
+            }
         }
-    }
-    j["dependencies"] = std::move(depsArr);
+        return arr;
+    };
+    j["dependencies"] = serializeDependencies(dependencies);
+
+    // Emitted only when declared, so a package that uses neither round-trips
+    // byte-identically to what 0.4.0 tooling produced.
+    if (!optionalDependencies.empty())
+        j["optional_dependencies"] = serializeDependencies(optionalDependencies);
+    if (!interfaceDependencies.empty())
+        j["interface_dependencies"] = interfaceDependencies;
     
     // hashes (only if non-empty, for backward compat with unsigned packages)
     if (!hashes.empty()) {
@@ -499,6 +547,13 @@ Manifest::ValidationResult Manifest::compareMetadata(const Manifest& other) cons
         result.addError("icon: '" + icon + "' vs '" + other.icon + "'");
     if (dependencies != other.dependencies)
         result.addError("dependencies differ");
+    // Non-variant, like `dependencies`: two builds of one package that disagree
+    // about what it can call are not two variants of the same package. Omitting
+    // these would let `lgx merge` silently keep the reference's copy.
+    if (optionalDependencies != other.optionalDependencies)
+        result.addError("optional_dependencies differ");
+    if (interfaceDependencies != other.interfaceDependencies)
+        result.addError("interface_dependencies differ");
     if (type == "ui_qml" && other.type == "ui_qml" && view != other.view)
         result.addError("view: '" + view + "' vs '" + other.view + "'");
     if (displayName != other.displayName)

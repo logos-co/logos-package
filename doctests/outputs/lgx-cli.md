@@ -108,7 +108,7 @@ sensible defaults plus an empty `variants/` directory — to `<name>.lgx`.
 ### 3.2 Read the fresh manifest
 
 `lgx manifest` prints the embedded `manifest.json` in human-readable form. A
-freshly created package starts at version `0.0.1`, manifest schema `0.5.0`, with
+freshly created package starts at version `0.0.1`, manifest schema `0.6.0`, with
 no type, no variants, and no signature yet.
 
 ```bash
