@@ -35,7 +35,9 @@ package.lgx (tar.gz)
 ├── manifest.json          # Required - package metadata
 ├── manifest.sig           # Optional - Ed25519 signature with DID identity
 ├── assets/                # Optional - variant-independent package assets
-│   └── icon.png           #   Package icon: PNG, exactly 256x256
+│   ├── icon.png           #   Package icon: PNG, exactly 256x256
+│   └── lidl/              #   Canonical module interface documents
+│       └── <name>.lidl
 ├── variants/              # Required - contains variant directories
 │   ├── <variant-1>/       # Variant directory (lowercase name)
 │   │   └── ...            # Variant contents
@@ -52,6 +54,12 @@ package.lgx (tar.gz)
 - Any other root entries cause validation failure
 - Files directly under `variants/` are forbidden (only directories allowed)
 - This strict structure keeps packages easy to validate and reduces ambiguity
+
+Everything under `assets/` is platform-independent and stored once, outside
+`variants/`. `assets/lidl/<name>.lidl` contains canonical LIDL documents: core
+module packages carry their own interface plus dependency contracts; UI plugin
+packages carry dependency contracts only. Asset paths are content-addressed by
+the package Merkle tree like every other file.
 
 ### Manifest Schema
 
@@ -400,7 +408,7 @@ lgx create <name>
 ### Variant Addition Workflow
 
 ```
-lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [--view <relpath>] [-y]
+lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [--view <relpath>] [--assets <dir>] [-y]
 ```
 
 1. Load existing package
@@ -418,8 +426,11 @@ lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [--view <relpa
 8. Copy files/directory to `variants/<variant>/`
    - Single file: `variants/<variant>/<filename>`
    - Directory: `variants/<variant>/...` (contents placed directly)
-9. Update `main[variant]` entry only when an effective main path exists
-10. Validate and save package
+9. If `--assets <dir>` is present, merge its contents under root-level
+   `assets/`. Byte-identical existing paths are deduplicated; a path with
+   different bytes is rejected.
+10. Update `main[variant]` entry only when an effective main path exists
+11. Validate and save package
 
 **Confirmation Required When:**
 - Replacing existing variant
@@ -431,6 +442,9 @@ lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [--view <relpa
 - `-f` for `--files`
 - `-m` for `--main`
 - `-y` for `--yes`
+
+`--assets` deliberately has no short alias. Its source directory is not copied
+into `variants/<variant>/`; it contributes one platform-independent tree.
 
 ### Variant Removal Workflow
 
@@ -470,8 +484,11 @@ lgx extract <pkg.lgx> [--variant <v>] [--output <dir>]
    non-NFC) and reject any entry whose resolved destination would fall outside
    `<output>/<variant>/`. On rejection, extraction fails with an error and no
    file outside the output directory is written.
-6. Create directories as needed
-7. Write files preserving internal directory structure
+6. Extract root-level `assets/` into each selected variant's output directory,
+   preserving the `assets/...` prefix. This gives installed packages one
+   coherent root while keeping the archive representation variant-independent.
+7. Create directories as needed
+8. Write files preserving internal directory structure
 
 **Output Structure:**
 - Each variant is extracted to `<output>/<variant-name>/`
@@ -501,12 +518,15 @@ lgx merge <pkg1.lgx> <pkg2.lgx> ... [-o <output.lgx>] [--skip-duplicates] [-y]
    - Otherwise default to `<name>.lgx` (from the manifest name)
 6. If output file exists, prompt for confirmation (unless `-y`)
 7. Create a fresh skeleton package with the shared metadata
-8. For each input package, for each variant:
+8. Merge root-level `assets/` from every input. Identical paths deduplicate;
+   differing bytes at the same path fail the merge. This prevents two platform
+   builds from silently publishing different contracts under one name.
+9. For each input package, for each variant:
    - Extract variant files to a temporary directory
    - Add variant to the output package using the standard `addVariant` flow
    - Preserve the `main` entry from the source package
-9. Save merged package
-10. Clean up temporary files
+10. Save merged package
+11. Clean up temporary files
 
 **Manifest Comparison:**
 The merge command compares all manifest fields except `main`, which is expected to differ across platform-specific builds. This ensures the merged package represents the same logical module across all variants.

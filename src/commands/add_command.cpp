@@ -38,6 +38,7 @@ int AddCommand::execute(const std::vector<std::string>& args) {
     std::string mainPath = getOption(opts, "main", "m");
     std::string viewPath = getOption(opts, "view");
     std::string iconPath = getOption(opts, "icon");
+    std::string assetsPath = getOption(opts, "assets");
     bool autoYes = hasFlag(opts, "yes", "y");
     
     // Check if package exists
@@ -61,6 +62,16 @@ int AddCommand::execute(const std::vector<std::string>& args) {
     
     Package& pkg = *pkgOpt;
     std::string variantLc = PathNormalizer::toLowercase(variant);
+
+    // Merge generic, platform-independent assets at package root. The package
+    // API deduplicates byte-identical paths and rejects conflicting content.
+    if (!assetsPath.empty()) {
+        auto assetsResult = pkg.addAssets(assetsPath);
+        if (!assetsResult.success) {
+            printError("Failed to add assets: " + assetsResult.error);
+            return 1;
+        }
+    }
 
     // Apply --view to the manifest if provided
     if (!viewPath.empty()) {

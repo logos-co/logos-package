@@ -100,6 +100,20 @@ public:
     Result setIcon(const std::vector<uint8_t>& pngData);
 
     /**
+     * Merge a directory of variant-independent assets into `assets/`.
+     * Existing files with identical bytes are deduplicated. Reusing an asset
+     * path for different content fails, which prevents platform package merges
+     * from silently choosing one contract over another.
+     *
+     * Invalidates any existing signature and recomputes content hashes when
+     * new entries are added.
+     */
+    Result addAssets(const std::filesystem::path& assetsPath);
+
+    /** Merge root assets from another package using the same conflict rules. */
+    Result mergeAssetsFrom(const Package& source);
+
+    /**
      * Add files to a variant.
      * If the variant exists, it is completely replaced.
      * 
@@ -153,6 +167,14 @@ public:
      * @return Result indicating success or failure
      */
     Result extractVariant(const std::string& variant, const std::filesystem::path& outputDir) const;
+
+    /**
+     * Extract only `variants/<variant>/`, excluding root-level assets. This is
+     * used when composing packages so assets remain at package root instead of
+     * being copied into each variant.
+     */
+    Result extractVariantPayload(const std::string& variant,
+                                 const std::filesystem::path& outputDir) const;
     
     /**
      * Extract all variants to an output directory.
@@ -296,6 +318,10 @@ private:
      * Remove entries for a variant.
      */
     void removeVariantEntries(const std::string& variant);
+
+    Result extractVariantImpl(const std::string& variant,
+                              const std::filesystem::path& outputDir,
+                              bool includeAssets) const;
     
     /**
      * Get directory entries that need to be created for a path.
