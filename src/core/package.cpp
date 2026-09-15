@@ -1083,9 +1083,10 @@ Package::Result Package::addAssets(const std::filesystem::path& assetsPath) {
         const bool identical = existing->isDirectory == incoming.isDirectory
             && (incoming.isDirectory || existing->data == incoming.data);
         if (!identical) {
+            const std::string conflictPath = incoming.path;
             entries_ = originalEntries;
             return Result::fail(
-                "Asset conflict at '" + incoming.path
+                "Asset conflict at '" + conflictPath
                 + "': existing and incoming content differ");
         }
         // Same path and bytes: one root asset is enough for every variant.

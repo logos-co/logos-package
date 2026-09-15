@@ -1376,8 +1376,9 @@ TEST_F(PackageTest, Assets_RejectConflictingContentAtTheSamePath) {
     ASSERT_TRUE(pkg.has_value());
     ASSERT_TRUE(pkg->addAssets(first).success);
     auto result = pkg->addAssets(second);
-    EXPECT_FALSE(result.success);
-    EXPECT_NE(result.error.find("assets/lidl/dep.lidl"), std::string::npos);
+    EXPECT_FALSE(result.success) << result.error;
+    EXPECT_NE(result.error.find("assets/lidl/dep.lidl"), std::string::npos)
+        << result.error;
 }
 
 // =============================================================================
