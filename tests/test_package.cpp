@@ -1345,12 +1345,12 @@ TEST_F(PackageTest, Assets_AreStoredOnceAndExtractedWithEveryVariant) {
             ++ownContractCount;
     EXPECT_EQ(ownContractCount, 1u);
 
-    fs::path linux = tempDir / "linux";
-    fs::path darwin = tempDir / "darwin";
-    createTestFile(linux / "mod.so", "linux");
-    createTestFile(darwin / "mod.dylib", "darwin");
-    ASSERT_TRUE(pkg->addVariant("linux-amd64", linux, "mod.so").success);
-    ASSERT_TRUE(pkg->addVariant("darwin-arm64", darwin, "mod.dylib").success);
+    fs::path linuxFiles = tempDir / "linux";
+    fs::path darwinFiles = tempDir / "darwin";
+    createTestFile(linuxFiles / "mod.so", "linux");
+    createTestFile(darwinFiles / "mod.dylib", "darwin");
+    ASSERT_TRUE(pkg->addVariant("linux-amd64", linuxFiles, "mod.so").success);
+    ASSERT_TRUE(pkg->addVariant("darwin-arm64", darwinFiles, "mod.dylib").success);
     ASSERT_TRUE(pkg->save(pkgPath).success);
 
     auto loaded = Package::load(pkgPath);
