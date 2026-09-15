@@ -146,23 +146,14 @@ int MergeCommand::execute(const std::vector<std::string>& args) {
     mergedManifest.optionalDependencies = refManifest.optionalDependencies;
     mergedManifest.interfaceDependencies = refManifest.interfaceDependencies;
 
-    // Lift the root-level icon from the reference package. At
-    // manifestVersion 0.4.0+ the icon is variant-independent and lives once
-    // at package root (assets/icon.png), so it does not travel through the
-    // per-variant loop below. Older manifests (0.3.x) carry the icon inside
-    // each variant and reach the merged package via addVariant(), so
-    // silently skip when no root entry matches.
-    if (!refManifest.icon.empty()) {
-        for (const auto& entry : packages[0].getEntries()) {
-            if (entry.path == refManifest.icon && !entry.isDirectory) {
-                auto iconResult = merged.setIcon(entry.data);
-                if (!iconResult.success) {
-                    printError("Failed to copy icon into merged package: " +
-                               iconResult.error);
-                    return 1;
-                }
-                break;
-            }
+    // Root assets are platform-independent. Merge their union once, rejecting
+    // a path whose bytes differ between packages. Identical files deduplicate.
+    for (size_t i = 0; i < packages.size(); ++i) {
+        auto assetsResult = merged.mergeAssetsFrom(packages[i]);
+        if (!assetsResult.success) {
+            printError("Asset mismatch while merging '" + positional[i]
+                       + "': " + assetsResult.error);
+            return 1;
         }
     }
 
@@ -191,7 +182,9 @@ int MergeCommand::execute(const std::vector<std::string>& args) {
                 return 1;
             }
 
-            auto extractResult = packages[i].extractVariant(variant, extractDir);
+            // Root assets were merged above and must not be copied into every
+            // variants/<target>/ payload while composing the package.
+            auto extractResult = packages[i].extractVariantPayload(variant, extractDir);
             if (!extractResult.success) {
                 printError("Failed to extract variant '" + variant + "' from '" +
                            positional[i] + "': " + extractResult.error);

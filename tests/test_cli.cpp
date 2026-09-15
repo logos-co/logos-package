@@ -169,6 +169,40 @@ TEST_F(CLITest, AddCommand_Directory) {
     EXPECT_EQ(exitCode, 0);
 }
 
+// Test: lgx add ... --assets <directory>
+// Verifies that generic assets are written once at package root rather than
+// copied under the platform variant.
+TEST_F(CLITest, AddCommand_PlatformIndependentAssets) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    fs::path testFile = tempDir / "lib.so";
+    fs::path assetsDir = tempDir / "assets";
+
+    runLgx("create " + (tempDir / "test").string());
+    std::ofstream(testFile) << "module";
+    fs::create_directories(assetsDir / "lidl");
+    std::ofstream(assetsDir / "lidl/test.lidl")
+        << "module test {\n  depends []\n}\n";
+
+    std::string output;
+    int exitCode = runLgx(
+        "add " + pkgPath.string() + " -v linux-amd64 -f " +
+        testFile.string() + " --assets " + assetsDir.string() + " -y",
+        &output
+    );
+
+    ASSERT_EQ(exitCode, 0) << output;
+    auto pkg = lgx::Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+
+    size_t rootAssetCount = 0;
+    for (const auto& entry : pkg->getEntries()) {
+        if (entry.path == "assets/lidl/test.lidl" && !entry.isDirectory)
+            ++rootAssetCount;
+        EXPECT_EQ(entry.path.find("linux-amd64/assets/"), std::string::npos);
+    }
+    EXPECT_EQ(rootAssetCount, 1u);
+}
+
 // Test: lgx add <pkg> --variant <existing-v> --files <new-file> -y
 // Verifies variant replacement (no merge) - old content should be replaced
 // Commands: lgx create, lgx add (twice), lgx verify
@@ -468,6 +502,68 @@ TEST_F(CLITest, MergeCommand_BasicMerge) {
     // Verify the merged package is valid
     exitCode = runLgx("verify " + merged.string(), &output);
     EXPECT_EQ(exitCode, 0);
+}
+
+TEST_F(CLITest, MergeCommand_DeduplicatesIdenticalRootAssets) {
+    fs::path pkg1 = tempDir / "pkg1.lgx";
+    fs::path pkg2 = tempDir / "pkg2.lgx";
+    fs::path merged = tempDir / "merged.lgx";
+    fs::path assets = tempDir / "assets";
+    fs::create_directories(assets / "lidl");
+    std::ofstream(assets / "lidl/test.lidl")
+        << "module test {\n  depends []\n}\n";
+
+    createSingleVariantPackage(lgxBinary.string(), pkg1, "test", "linux-amd64", "linux");
+    createSingleVariantPackage(lgxBinary.string(), pkg2, "test", "darwin-arm64", "darwin");
+    ASSERT_EQ(runLgx("add " + pkg1.string() + " -v linux-amd64 -f " +
+                     (tempDir / "linux-amd64_file.so").string() +
+                     " --assets " + assets.string() + " -y"), 0);
+    ASSERT_EQ(runLgx("add " + pkg2.string() + " -v darwin-arm64 -f " +
+                     (tempDir / "darwin-arm64_file.so").string() +
+                     " --assets " + assets.string() + " -y"), 0);
+
+    std::string output;
+    ASSERT_EQ(runLgx("merge " + pkg1.string() + " " + pkg2.string() +
+                     " -o " + merged.string() + " -y", &output), 0) << output;
+
+    auto pkg = lgx::Package::load(merged);
+    ASSERT_TRUE(pkg.has_value());
+    size_t count = 0;
+    for (const auto& entry : pkg->getEntries())
+        if (entry.path == "assets/lidl/test.lidl" && !entry.isDirectory)
+            ++count;
+    EXPECT_EQ(count, 1u);
+}
+
+TEST_F(CLITest, MergeCommand_RejectsConflictingRootAssets) {
+    fs::path pkg1 = tempDir / "pkg1.lgx";
+    fs::path pkg2 = tempDir / "pkg2.lgx";
+    fs::path merged = tempDir / "merged.lgx";
+    fs::path assets1 = tempDir / "assets1";
+    fs::path assets2 = tempDir / "assets2";
+    fs::create_directories(assets1 / "lidl");
+    fs::create_directories(assets2 / "lidl");
+    std::ofstream(assets1 / "lidl/test.lidl") << "first";
+    std::ofstream(assets2 / "lidl/test.lidl") << "second";
+
+    createSingleVariantPackage(lgxBinary.string(), pkg1, "test", "linux-amd64", "linux");
+    createSingleVariantPackage(lgxBinary.string(), pkg2, "test", "darwin-arm64", "darwin");
+    ASSERT_EQ(runLgx("add " + pkg1.string() + " -v linux-amd64 -f " +
+                     (tempDir / "linux-amd64_file.so").string() +
+                     " --assets " + assets1.string() + " -y"), 0);
+    ASSERT_EQ(runLgx("add " + pkg2.string() + " -v darwin-arm64 -f " +
+                     (tempDir / "darwin-arm64_file.so").string() +
+                     " --assets " + assets2.string() + " -y"), 0);
+
+    std::string output;
+    int exitCode = runLgx(
+        "merge " + pkg1.string() + " " + pkg2.string() +
+        " -o " + merged.string() + " -y",
+        &output
+    );
+
+    EXPECT_NE(exitCode, 0);
+    EXPECT_NE(output.find("Asset conflict"), std::string::npos);
 }
 
 // Test: lgx merge with duplicate variants (should fail)

@@ -752,6 +752,21 @@ Package::Result Package::extractVariant(
     const std::string& variant,
     const std::filesystem::path& outputDir
 ) const {
+    return extractVariantImpl(variant, outputDir, true);
+}
+
+Package::Result Package::extractVariantPayload(
+    const std::string& variant,
+    const std::filesystem::path& outputDir
+) const {
+    return extractVariantImpl(variant, outputDir, false);
+}
+
+Package::Result Package::extractVariantImpl(
+    const std::string& variant,
+    const std::filesystem::path& outputDir,
+    bool includeAssets
+) const {
     namespace fs = std::filesystem;
     std::error_code ec;
     
@@ -785,8 +800,8 @@ Package::Result Package::extractVariant(
 
     for (const auto& entry : entries_) {
         const bool inVariant = entry.path.compare(0, prefix.length(), prefix) == 0;
-        const bool inAssets =
-            entry.path.compare(0, assetsPrefix.length(), assetsPrefix) == 0;
+        const bool inAssets = includeAssets
+            && entry.path.compare(0, assetsPrefix.length(), assetsPrefix) == 0;
         if (!inVariant && !inAssets) {
             continue;
         }
@@ -1036,6 +1051,93 @@ Package::Result Package::setIcon(const std::vector<uint8_t>& pngData) {
         return hashResult;
     }
 
+    return Result::ok();
+}
+
+Package::Result Package::addAssets(const std::filesystem::path& assetsPath) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::is_directory(assetsPath, ec) || ec) {
+        return Result::fail("Assets path is not a directory: " + assetsPath.string());
+    }
+
+    const std::vector<TarEntry> originalEntries = entries_;
+    const size_t firstIncoming = entries_.size();
+    auto addResult = addFilesystemEntries(assetsPath, "assets");
+    if (!addResult.success) {
+        entries_ = originalEntries;
+        return addResult;
+    }
+
+    std::vector<TarEntry> merged = originalEntries;
+    for (size_t i = firstIncoming; i < entries_.size(); ++i) {
+        const TarEntry& incoming = entries_[i];
+        auto existing = std::find_if(
+            merged.begin(), merged.end(),
+            [&](const TarEntry& entry) { return entry.path == incoming.path; });
+        if (existing == merged.end()) {
+            merged.push_back(incoming);
+            continue;
+        }
+
+        const bool identical = existing->isDirectory == incoming.isDirectory
+            && (incoming.isDirectory || existing->data == incoming.data);
+        if (!identical) {
+            entries_ = originalEntries;
+            return Result::fail(
+                "Asset conflict at '" + incoming.path
+                + "': existing and incoming content differ");
+        }
+        // Same path and bytes: one root asset is enough for every variant.
+    }
+    entries_ = std::move(merged);
+
+    clearSignature();
+    auto hashResult = recomputeHashes();
+    if (!hashResult.success) {
+        entries_ = originalEntries;
+        return hashResult;
+    }
+    return Result::ok();
+}
+
+Package::Result Package::mergeAssetsFrom(const Package& source) {
+    std::vector<TarEntry> merged = entries_;
+    bool changed = false;
+
+    for (const TarEntry& incoming : source.entries_) {
+        if (incoming.path != "assets"
+            && incoming.path.compare(0, std::string("assets/").size(), "assets/") != 0) {
+            continue;
+        }
+
+        auto existing = std::find_if(
+            merged.begin(), merged.end(),
+            [&](const TarEntry& entry) { return entry.path == incoming.path; });
+        if (existing == merged.end()) {
+            merged.push_back(incoming);
+            changed = true;
+            continue;
+        }
+
+        const bool identical = existing->isDirectory == incoming.isDirectory
+            && (incoming.isDirectory || existing->data == incoming.data);
+        if (!identical) {
+            return Result::fail(
+                "Asset conflict at '" + incoming.path
+                + "': packages contain different bytes");
+        }
+    }
+
+    if (!changed) return Result::ok();
+    const std::vector<TarEntry> originalEntries = entries_;
+    entries_ = std::move(merged);
+    clearSignature();
+    auto hashResult = recomputeHashes();
+    if (!hashResult.success) {
+        entries_ = originalEntries;
+        return hashResult;
+    }
     return Result::ok();
 }
 

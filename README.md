@@ -25,6 +25,17 @@ Add a directory to a variant (usually requires `--main`):
 lgx add mymodule.lgx --variant web --files ./dist --main index.js
 ```
 
+Add platform-independent assets once at the package root:
+
+```bash
+# ./assets/lidl/foo.lidl becomes assets/lidl/foo.lidl in the archive
+lgx add mymodule.lgx --variant linux-amd64 --files ./build/libfoo.so \
+  --assets ./assets
+```
+
+Adding the same asset path and bytes again is a no-op; different bytes at the
+same path are rejected. Root assets are shared by every package variant.
+
 For `type == "ui_qml"` packages, `view` is the required QML entry point and
 `main` is optional backend metadata, so directory variants can be added without
 `--main` when there is no backend plugin. Use `--view` to set the QML entry
@@ -161,7 +172,7 @@ Merge multiple single-variant `.lgx` packages into one multi-variant package:
 lgx merge linux.lgx darwin.lgx -o mymodule.lgx
 ```
 
-All input packages must have identical manifests (except for the variant-specific `main` field). Fails on duplicate variants unless `--skip-duplicates` is used:
+All input packages must have identical manifests (except for the variant-specific `main` field). Root assets are unioned: identical paths deduplicate, while different bytes at the same path fail the merge. Fails on duplicate variants unless `--skip-duplicates` is used:
 
 ```bash
 lgx merge pkg1.lgx pkg2.lgx pkg3.lgx --skip-duplicates -o mymodule.lgx -y
@@ -180,7 +191,7 @@ tar -tzf mymodule.lgx
 | Command | Description |
 |---------|-------------|
 | `lgx create <name>` | Create a new skeleton package |
-| `lgx add <pkg> --variant <v> --files <path> [--main <relpath>] [--view <relpath>] [-y]` | Add files to a variant |
+| `lgx add <pkg> --variant <v> --files <path> [--main <relpath>] [--view <relpath>] [--assets <dir>] [-y]` | Add variant files and optional platform-independent assets |
 | `lgx remove <pkg> --variant <v> [-y]` | Remove a variant |
 | `lgx extract <pkg> [--variant <v>] [--output <dir>]` | Extract variant contents |
 | `lgx merge <pkg1> <pkg2> ... [-o <output>] [--skip-duplicates] [-y]` | Merge packages into one |
@@ -242,6 +253,10 @@ satisfies a caret range on 1.x — while `^1.0.0-rc.1` still matches `1.0.0-rc.2
 mymodule.lgx (tar.gz)
 ├── manifest.json          # Package metadata
 ├── manifest.sig           # Optional - Ed25519 signature with DID identity
+├── assets/                # Optional, platform-independent
+│   └── lidl/
+│       ├── mymodule.lidl  # Canonical module interface
+│       └── dependency.lidl
 ├── variants/
 │   ├── linux-amd64/
 │   │   └── libfoo.so
@@ -456,4 +471,3 @@ make -j$(nproc)
 cd build
 ctest --output-on-failure
 ```
-

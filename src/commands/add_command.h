@@ -5,7 +5,7 @@
 namespace lgx {
 
 /**
- * Add command: lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [--view <relpath>] [-y/--yes]
+ * Add command: lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [--view <relpath>] [--assets <dir>] [-y/--yes]
  * 
  * Adds files to a variant. If the variant exists, it is completely replaced.
  */
@@ -17,7 +17,7 @@ public:
         return "Add files to a package variant"; 
     }
     std::string usage() const override {
-        return "lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [--view <relpath>] [-y/--yes]\n"
+        return "lgx add <pkg.lgx> --variant <v> --files <path> [--main <relpath>] [--view <relpath>] [--assets <dir>] [-y/--yes]\n"
                "\n"
                "Adds files to a variant in the package.\n"
                "If the variant already exists, it is COMPLETELY REPLACED (no merge).\n"
@@ -32,6 +32,9 @@ public:
                "  --view <relpath>       QML entry point relative to variant root\n"
                "                         (required for `ui_qml` packages; sets the\n"
                "                          manifest-level `view` field)\n"
+               "  --assets <dir>         Merge variant-independent files under assets/.\n"
+               "                         Identical paths are deduplicated; conflicting\n"
+               "                         content is rejected\n"
                "  --icon <path>          Package icon: PNG, exactly 256x256. Stored\n"
                "                         once at assets/icon.png and shared by every\n"
                "                         variant. Required for `ui_qml` packages at\n"

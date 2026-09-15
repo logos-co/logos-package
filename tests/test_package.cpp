@@ -1321,6 +1321,66 @@ TEST_F(PackageTest, Verify_SignedPackage_ValidHashes) {
 }
 
 // =============================================================================
+// Variant-independent assets
+// =============================================================================
+
+TEST_F(PackageTest, Assets_AreStoredOnceAndExtractedWithEveryVariant) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    ASSERT_TRUE(Package::create(pkgPath, "testpkg").success);
+
+    fs::path assets = tempDir / "assets-source";
+    createTestDirectory(assets, {
+        {"lidl/testpkg.lidl", "module testpkg {\n  depends []\n}\n"},
+        {"lidl/dep.lidl", "module dep {\n  depends []\n}\n"},
+    });
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    ASSERT_TRUE(pkg->addAssets(assets).success);
+    // Adding the same canonical contracts for another platform is a no-op.
+    ASSERT_TRUE(pkg->addAssets(assets).success);
+
+    size_t ownContractCount = 0;
+    for (const auto& entry : pkg->getEntries())
+        if (entry.path == "assets/lidl/testpkg.lidl" && !entry.isDirectory)
+            ++ownContractCount;
+    EXPECT_EQ(ownContractCount, 1u);
+
+    fs::path linux = tempDir / "linux";
+    fs::path darwin = tempDir / "darwin";
+    createTestFile(linux / "mod.so", "linux");
+    createTestFile(darwin / "mod.dylib", "darwin");
+    ASSERT_TRUE(pkg->addVariant("linux-amd64", linux, "mod.so").success);
+    ASSERT_TRUE(pkg->addVariant("darwin-arm64", darwin, "mod.dylib").success);
+    ASSERT_TRUE(pkg->save(pkgPath).success);
+
+    auto loaded = Package::load(pkgPath);
+    ASSERT_TRUE(loaded.has_value());
+    for (const std::string variant : {"linux-amd64", "darwin-arm64"}) {
+        fs::path out = tempDir / ("out-" + variant);
+        ASSERT_TRUE(loaded->extractVariant(variant, out).success);
+        EXPECT_TRUE(fs::exists(out / variant / "assets/lidl/testpkg.lidl"));
+        EXPECT_TRUE(fs::exists(out / variant / "assets/lidl/dep.lidl"));
+    }
+}
+
+TEST_F(PackageTest, Assets_RejectConflictingContentAtTheSamePath) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    ASSERT_TRUE(Package::create(pkgPath, "testpkg").success);
+
+    fs::path first = tempDir / "first";
+    fs::path second = tempDir / "second";
+    createTestFile(first / "lidl/dep.lidl", "first");
+    createTestFile(second / "lidl/dep.lidl", "second");
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    ASSERT_TRUE(pkg->addAssets(first).success);
+    auto result = pkg->addAssets(second);
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.error.find("assets/lidl/dep.lidl"), std::string::npos);
+}
+
+// =============================================================================
 // Icon Contract (manifest 0.4.0+) — plan.md §3.4, §3.7
 // =============================================================================
 
