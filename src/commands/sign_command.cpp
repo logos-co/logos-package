@@ -17,14 +17,15 @@ int SignCommand::execute(const std::vector<std::string>& args) {
         return 1;
     }
 
-    std::string keyName = getOption(opts, "key", "k");
-    if (keyName.empty()) {
-        printError("Missing required option: --key <name>");
+    std::string key = getOption(opts, "key", "k");
+    if (key.empty()) {
+        printError("Missing required option: --key <name-or-path>");
         return 1;
     }
 
     std::string signerName = getOption(opts, "name", "");
-    std::string signerUrl = getOption(opts, "url", "");
+    std::string signerUrl  = getOption(opts, "url", "");
+    std::string keysDirOpt = getOption(opts, "keys-dir", "d");
 
     std::string pkgPath = positional[0];
 
@@ -38,41 +39,57 @@ int SignCommand::execute(const std::vector<std::string>& args) {
         return 1;
     }
 
-    // Load secret key
-    std::string keysDirOpt = getOption(opts, "keys-dir", "d");
-    std::filesystem::path keysDir;
-    if (!keysDirOpt.empty()) {
-        keysDir = keysDirOpt;
+    // A value containing a path separator is a key FILE, loaded by
+    // content; anything else is a key NAME resolved as
+    // <keys-dir>/<name>.jwk. Backward compatible: names with
+    // separators were always rejected by validateKeyName().
+    const bool isPath =
+        key.find('/') != std::string::npos ||
+        key.find('\\') != std::string::npos;
+
+    std::optional<crypto::SecretKey> sk;
+    if (isPath) {
+        if (!keysDirOpt.empty()) {
+            printError("--keys-dir has no effect when --key is a file path");
+            return 1;
+        }
+        sk = crypto::Keyring::loadSecretKeyFile(key);
+        if (!sk) {
+            printError("Failed to load key file '" + key + "': " +
+                       crypto::Keyring::getLastError());
+            return 1;
+        }
     } else {
-        keysDir = crypto::Keyring::defaultKeysDirectory();
-    }
-    if (keysDir.empty()) {
-        printError("Cannot determine keys directory (HOME not set?)");
-        return 1;
+        std::filesystem::path keysDir;
+        if (!keysDirOpt.empty()) {
+            keysDir = keysDirOpt;
+        } else {
+            keysDir = crypto::Keyring::defaultKeysDirectory();
+        }
+        if (keysDir.empty()) {
+            printError("Cannot determine keys directory (HOME not set?)");
+            return 1;
+        }
+        sk = crypto::Keyring::loadSecretKey(keysDir, key);
+        if (!sk) {
+            printError("Failed to load secret key '" + key + "': " +
+                       crypto::Keyring::getLastError());
+            return 1;
+        }
     }
 
-    auto sk = crypto::Keyring::loadSecretKey(keysDir, keyName);
-    if (!sk) {
-        printError("Failed to load secret key '" + keyName + "': " +
-                  crypto::Keyring::getLastError());
-        return 1;
-    }
-
-    // Load package
     auto pkg = Package::load(pkgPath);
     if (!pkg) {
         printError("Failed to load package: " + pkgPath);
         return 1;
     }
 
-    // Sign
     auto signResult = pkg->signPackage(*sk, signerName, signerUrl);
     if (!signResult.success) {
         printError("Failed to sign package: " + signResult.error);
         return 1;
     }
 
-    // Save
     auto saveResult = pkg->save(pkgPath);
     if (!saveResult.success) {
         printError("Failed to save signed package: " + saveResult.error);

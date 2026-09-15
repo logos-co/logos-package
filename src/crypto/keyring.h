@@ -125,6 +125,14 @@ public:
         const std::string& name);
 
     /**
+     * Load a secret key from an explicit file path. The file is parsed
+     * by content (Ed25519 secret JWK: kty=OKP, crv=Ed25519, d present);
+     * its name and extension are irrelevant.
+     */
+    static std::optional<SecretKey> loadSecretKeyFile(
+        const std::filesystem::path& keyFile);
+
+    /**
      * Get last error message.
      */
     static std::string getLastError();
