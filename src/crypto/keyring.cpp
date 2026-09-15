@@ -339,18 +339,19 @@ bool Keyring::saveKeypair(
 }
 
 std::optional<SecretKey> Keyring::loadSecretKey(
-    const std::filesystem::path& keysDir,
-    const std::string& name)
-{
+    const std::filesystem::path& keysDir, const std::string& name) {
     if (!validateKeyName(name)) {
         return std::nullopt;
     }
+    return loadSecretKeyFile(keysDir / (name + ".jwk"));
+}
 
-    auto jwkPath = keysDir / (name + ".jwk");
-
-    std::ifstream file(jwkPath);
+std::optional<SecretKey> Keyring::loadSecretKeyFile(
+    const std::filesystem::path& keyFile)
+{
+    std::ifstream file(keyFile);
     if (!file) {
-        lastError_ = "Cannot read secret key: " + jwkPath.string();
+        lastError_ = "Cannot read secret key: " + keyFile.string();
         return std::nullopt;
     }
 
@@ -361,7 +362,7 @@ std::optional<SecretKey> Keyring::loadSecretKey(
         json j = json::parse(content);
 
         if (!j.contains("d") || !j["d"].is_string()) {
-            lastError_ = "Invalid JWK: missing 'd' field";
+            lastError_ = "Invalid JWK: missing 'd' field (is this the public key?)";
             return std::nullopt;
         }
 
@@ -374,7 +375,6 @@ std::optional<SecretKey> Keyring::loadSecretKey(
             return std::nullopt;
         }
 
-        // Reconstruct the full 64-byte libsodium secret key from the seed
         PublicKey pk;
         SecretKey sk;
         if (crypto_sign_seed_keypair(pk.data(), sk.data(), seedBytes->data()) != 0) {
@@ -388,7 +388,6 @@ std::optional<SecretKey> Keyring::loadSecretKey(
         return std::nullopt;
     }
 }
-
 std::string Keyring::getLastError() {
     return lastError_;
 }
