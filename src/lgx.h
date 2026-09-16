@@ -329,6 +329,16 @@ LGX_EXPORT lgx_result_t lgx_remove_variant(lgx_package_t pkg, const char* varian
 LGX_EXPORT lgx_result_t lgx_extract(lgx_package_t pkg, const char* variant, const char* output_dir);
 
 /**
+ * Extract only the package's root assets/ tree, without unpacking any variant.
+ * A package without assets succeeds and writes nothing.
+ *
+ * @param pkg Package handle
+ * @param output_dir Output directory path (assets go to output_dir/assets/)
+ * @return Result indicating success or failure
+ */
+LGX_EXPORT lgx_result_t lgx_extract_assets(lgx_package_t pkg, const char* output_dir);
+
+/**
  * Check if a variant exists in the package.
  * 
  * @param pkg Package handle

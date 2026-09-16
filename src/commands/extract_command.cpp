@@ -7,8 +7,32 @@
 namespace lgx {
 
 int ExtractCommand::execute(const std::vector<std::string>& args) {
+    // --assets-only takes no value; pull it out so parseArgs cannot bind the next word to it.
+    bool assetsOnly = false;
+    std::vector<std::string> rest;
+    for (const auto& arg : args) {
+        if (arg == "--assets-only") {
+            assetsOnly = true;
+        } else {
+            rest.push_back(arg);
+        }
+    }
+
     std::vector<std::string> positional;
-    auto opts = parseArgs(args, positional);
+    auto opts = parseArgs(rest, positional);
+
+    if (opts.count("assets-only")) {
+        printError("--assets-only takes no value");
+        std::cerr << "\nUsage: " << usage() << std::endl;
+        return 1;
+    }
+
+    if (assetsOnly && (opts.count("variant") || opts.count("v"))) {
+        printError("--assets-only cannot be combined with --variant: "
+                   "root assets are the same for every variant");
+        std::cerr << "\nUsage: " << usage() << std::endl;
+        return 1;
+    }
     
     // Check for package path
     if (positional.empty()) {
@@ -38,7 +62,17 @@ int ExtractCommand::execute(const std::vector<std::string>& args) {
     Package& pkg = *pkgOpt;
     
     Package::Result result;
-    if (variant.empty()) {
+    if (assetsOnly) {
+        result = pkg.extractAssets(outputDir);
+        if (result.success) {
+            if (pkg.hasAssets()) {
+                printSuccess("Extracted assets to " +
+                             (std::filesystem::path(outputDir) / "assets").string());
+            } else {
+                printInfo("No assets to extract");
+            }
+        }
+    } else if (variant.empty()) {
         result = pkg.extractAll(outputDir);
         if (result.success) {
             auto variants = pkg.getVariants();

@@ -1,5 +1,9 @@
 #include <gtest/gtest.h>
 #include "lgx.h"
+#include "core/gzip_handler.h"
+#include "core/manifest.h"
+#include "core/package.h"
+#include "core/tar_writer.h"
 #include <filesystem>
 #include <fstream>
 #include <cstring>
@@ -418,6 +422,109 @@ TEST_F(LibraryTest, ExtractNullArgs) {
     result = lgx_extract(pkg, "variant", nullptr);
     EXPECT_FALSE(result.success);
     
+    lgx_free_package(pkg);
+}
+
+// The C API cannot add root assets, so these fixtures come from the C++ core.
+TEST_F(LibraryTest, ExtractAssetsOnly) {
+    namespace fs = std::filesystem;
+    const fs::path pkgPath = test_dir_ / "assets.lgx";
+    const fs::path assets = test_dir_ / "assets-source";
+    const fs::path lib = test_dir_ / "lib.so";
+    fs::create_directories(assets / "lidl");
+    std::ofstream(assets / "lidl" / "a.lidl") << "module a {}";
+    std::ofstream(lib) << "binary";
+    {
+        ASSERT_TRUE(lgx::Package::create(pkgPath, "testpkg").success);
+        auto core = lgx::Package::load(pkgPath);
+        ASSERT_TRUE(core.has_value());
+        ASSERT_TRUE(core->addAssets(assets).success);
+        ASSERT_TRUE(core->save(pkgPath).success);
+    }
+
+    lgx_package_t pkg = lgx_load(pkgPath.string().c_str());
+    ASSERT_NE(pkg, nullptr);
+    ASSERT_TRUE(lgx_add_variant(pkg, "linux-amd64", lib.string().c_str(), nullptr).success);
+
+    const fs::path out = test_dir_ / "extracted";
+    lgx_result_t result = lgx_extract_assets(pkg, out.string().c_str());
+    ASSERT_TRUE(result.success) << (result.error ? result.error : "");
+    EXPECT_EQ(result.error, nullptr);
+    EXPECT_TRUE(fs::exists(out / "assets" / "lidl" / "a.lidl"));
+
+    std::vector<std::string> topLevel;
+    for (const auto& item : fs::directory_iterator(out)) {
+        topLevel.push_back(item.path().filename().string());
+    }
+    EXPECT_EQ(topLevel, std::vector<std::string>{"assets"});
+
+    lgx_free_package(pkg);
+}
+
+TEST_F(LibraryTest, ExtractAssetsWithoutAssetsWritesNothing) {
+    auto output_path = (test_dir_ / "test.lgx").string();
+    auto extract_dir = test_dir_ / "extracted";
+
+    lgx_create(output_path.c_str(), "testpkg");
+    lgx_package_t pkg = lgx_load(output_path.c_str());
+    ASSERT_NE(pkg, nullptr);
+
+    lgx_result_t result = lgx_extract_assets(pkg, extract_dir.string().c_str());
+    EXPECT_TRUE(result.success) << (result.error ? result.error : "");
+    EXPECT_FALSE(std::filesystem::exists(extract_dir));
+
+    lgx_free_package(pkg);
+}
+
+TEST_F(LibraryTest, ExtractAssetsRefusesUnsafePathAcrossTheAbi) {
+    namespace fs = std::filesystem;
+    const fs::path pkgPath = test_dir_ / "evil.lgx";
+    {
+        lgx::Manifest manifest;
+        manifest.name = "evil";
+        manifest.version = "0.0.1";
+        lgx::DeterministicTarWriter writer;
+        writer.addFile("manifest.json", manifest.toJson());
+        writer.addDirectory("variants");
+        writer.addFile("assets/../../pwned.txt", std::string("owned"));
+        const auto gzip = lgx::GzipHandler::compress(writer.finalize());
+        ASSERT_FALSE(gzip.empty());
+        std::ofstream(pkgPath, std::ios::binary)
+            .write(reinterpret_cast<const char*>(gzip.data()),
+                   static_cast<std::streamsize>(gzip.size()));
+    }
+
+    lgx_package_t pkg = lgx_load(pkgPath.string().c_str());
+    ASSERT_NE(pkg, nullptr) << lgx_get_last_error();
+
+    // <test_dir_>/out/deep/assets/../../pwned.txt would be <test_dir_>/out/pwned.txt.
+    const fs::path out = test_dir_ / "out" / "deep";
+    lgx_result_t result = lgx_extract_assets(pkg, out.string().c_str());
+    EXPECT_FALSE(result.success);
+    ASSERT_NE(result.error, nullptr);
+    EXPECT_NE(std::string(result.error).find("unsafe archive path"), std::string::npos)
+        << result.error;
+    EXPECT_STREQ(lgx_get_last_error(), result.error);
+    EXPECT_FALSE(fs::exists(test_dir_ / "out"));
+
+    lgx_free_package(pkg);
+}
+
+TEST_F(LibraryTest, ExtractAssetsNullArgs) {
+    auto output_path = (test_dir_ / "test.lgx").string();
+
+    lgx_create(output_path.c_str(), "testpkg");
+    lgx_package_t pkg = lgx_load(output_path.c_str());
+    ASSERT_NE(pkg, nullptr);
+
+    lgx_result_t result = lgx_extract_assets(nullptr, test_dir_.string().c_str());
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.error, nullptr);
+
+    result = lgx_extract_assets(pkg, nullptr);
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.error, nullptr);
+
     lgx_free_package(pkg);
 }
 

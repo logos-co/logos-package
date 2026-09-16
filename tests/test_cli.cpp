@@ -3,6 +3,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <set>
+#include <utility>
+#include <vector>
 
 #include "test_png.h"
 #include <sstream>
@@ -446,6 +449,127 @@ TEST_F(CLITest, AddCommand_UiQmlDirectoryWithoutView) {
 
     EXPECT_NE(exitCode, 0);
     EXPECT_NE(output.find("view"), std::string::npos);
+}
+
+// =============================================================================
+// Extract Command Tests
+// =============================================================================
+
+class ExtractCLITest : public CLITest {
+protected:
+    // test.lgx with a linux-amd64 variant and, optionally, root assets/lidl/a.lidl
+    // and assets/icon.png.
+    fs::path makePackage(bool withAssets) {
+        fs::path pkgPath = tempDir / "test.lgx";
+        fs::path lib = tempDir / "lib.so";
+        std::ofstream(lib) << "binary";
+        EXPECT_EQ(runLgx("create " + (tempDir / "test").string()), 0);
+
+        std::string add = "add " + pkgPath.string() + " -v linux-amd64 -f " +
+                          lib.string() + " -y";
+        if (withAssets) {
+            fs::path assets = tempDir / "assets-source";
+            fs::create_directories(assets / "lidl");
+            std::ofstream(assets / "lidl" / "a.lidl") << "module a {\n  depends []\n}\n";
+            add += " --assets " + assets.string() + " --icon " +
+                   lgx_test::writePng((tempDir / "icon.png").string());
+        }
+        std::string output;
+        EXPECT_EQ(runLgx(add, &output), 0) << output;
+        return pkgPath;
+    }
+
+    // Every path under `root`, relative and '/'-separated; directories end in '/'.
+    static std::set<std::string> listTree(const fs::path& root) {
+        std::set<std::string> tree;
+        for (const auto& item : fs::recursive_directory_iterator(root)) {
+            const std::string rel = fs::relative(item.path(), root).generic_string();
+            tree.insert(item.is_directory() ? rel + "/" : rel);
+        }
+        return tree;
+    }
+};
+
+// Test: lgx extract <pkg> --assets-only --output <dir>
+// Only root assets land in <dir>/assets/; no variant is unpacked.
+TEST_F(ExtractCLITest, AssetsOnly_WritesOnlyRootAssets) {
+    fs::path pkgPath = makePackage(true);
+    fs::path out = tempDir / "out";
+
+    std::string output;
+    int exitCode = runLgx("extract " + pkgPath.string() +
+                          " --assets-only --output " + out.string(), &output);
+
+    ASSERT_EQ(exitCode, 0) << output;
+    EXPECT_NE(output.find("Extracted assets to"), std::string::npos) << output;
+    EXPECT_EQ(listTree(out), (std::set<std::string>{
+        "assets/", "assets/icon.png", "assets/lidl/", "assets/lidl/a.lidl"}));
+}
+
+// The flag takes no value, so it may also precede the package path.
+TEST_F(ExtractCLITest, AssetsOnly_FlagBeforePackagePath) {
+    fs::path pkgPath = makePackage(true);
+    fs::path out = tempDir / "out";
+
+    std::string output;
+    int exitCode = runLgx("extract --assets-only " + pkgPath.string() +
+                          " -o " + out.string(), &output);
+
+    ASSERT_EQ(exitCode, 0) << output;
+    EXPECT_TRUE(fs::exists(out / "assets" / "lidl" / "a.lidl"));
+    EXPECT_FALSE(fs::exists(out / "linux-amd64"));
+}
+
+TEST_F(ExtractCLITest, AssetsOnly_PackageWithoutAssets) {
+    fs::path pkgPath = makePackage(false);
+    fs::path out = tempDir / "out";
+
+    std::string output;
+    int exitCode = runLgx("extract " + pkgPath.string() +
+                          " --assets-only -o " + out.string(), &output);
+
+    EXPECT_EQ(exitCode, 0) << output;
+    EXPECT_NE(output.find("No assets to extract"), std::string::npos) << output;
+    EXPECT_FALSE(fs::exists(out));
+}
+
+// Root assets are the same for every variant, and the flag is bare.
+TEST_F(ExtractCLITest, AssetsOnly_UsageErrors) {
+    fs::path pkgPath = makePackage(true);
+    fs::path out = tempDir / "out";
+
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        {"--assets-only --variant linux-amd64", "cannot be combined with --variant"},
+        {"-v linux-amd64 --assets-only", "cannot be combined with --variant"},
+        {"--assets-only=true", "takes no value"},
+    };
+    for (const auto& [flags, expected] : cases) {
+        std::string output;
+        int exitCode = runLgx("extract " + pkgPath.string() + " " + flags +
+                              " -o " + out.string(), &output);
+
+        EXPECT_NE(exitCode, 0) << flags;
+        EXPECT_NE(output.find(expected), std::string::npos) << flags << ": " << output;
+        EXPECT_FALSE(fs::exists(out)) << flags;
+    }
+}
+
+// Test: lgx extract <pkg> --variant <v> --output <dir>
+// Unchanged: the variant goes to <dir>/<v>/ with the root assets beside its files.
+TEST_F(ExtractCLITest, Variant_KeepsRootAssetsInTheVariantDirectory) {
+    fs::path pkgPath = makePackage(true);
+    fs::path out = tempDir / "out";
+
+    std::string output;
+    int exitCode = runLgx("extract " + pkgPath.string() +
+                          " --variant linux-amd64 --output " + out.string(), &output);
+
+    ASSERT_EQ(exitCode, 0) << output;
+    EXPECT_NE(output.find("Extracted variant 'linux-amd64'"), std::string::npos) << output;
+    EXPECT_EQ(listTree(out), (std::set<std::string>{
+        "linux-amd64/", "linux-amd64/lib.so",
+        "linux-amd64/assets/", "linux-amd64/assets/icon.png",
+        "linux-amd64/assets/lidl/", "linux-amd64/assets/lidl/a.lidl"}));
 }
 
 // =============================================================================

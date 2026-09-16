@@ -8,6 +8,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <vector>
 
 #include "test_png.h"
@@ -74,6 +75,42 @@ protected:
         std::ofstream out(pkgPath, std::ios::binary);
         out.write(reinterpret_cast<const char*>(gzipData.data()),
                   static_cast<std::streamsize>(gzipData.size()));
+    }
+
+    static constexpr const char* kContract = "module a {\n  depends []\n}\n";
+
+    // Saves a package with root assets/lidl/a.lidl and assets/icon.png plus a
+    // linux-amd64 variant holding mod.so.
+    void writePackageWithAssets(const fs::path& pkgPath) {
+        ASSERT_TRUE(Package::create(pkgPath, "testpkg").success);
+        auto pkg = Package::load(pkgPath);
+        ASSERT_TRUE(pkg.has_value());
+
+        fs::path assets = tempDir / "assets-source";
+        createTestDirectory(assets, {{"lidl/a.lidl", kContract}});
+        ASSERT_TRUE(pkg->addAssets(assets).success);
+        ASSERT_TRUE(pkg->setIcon(lgx_test::makePng()).success);
+
+        fs::path variantFiles = tempDir / "variant-source";
+        createTestFile(variantFiles / "mod.so", "binary");
+        ASSERT_TRUE(pkg->addVariant("linux-amd64", variantFiles, "mod.so").success);
+        ASSERT_TRUE(pkg->save(pkgPath).success);
+    }
+
+    // Every path under `root`, relative and '/'-separated; directories end in '/'.
+    static std::set<std::string> listTree(const fs::path& root) {
+        std::set<std::string> tree;
+        for (const auto& item : fs::recursive_directory_iterator(root)) {
+            const std::string rel = fs::relative(item.path(), root).generic_string();
+            tree.insert(item.is_directory() ? rel + "/" : rel);
+        }
+        return tree;
+    }
+
+    static std::string readFile(const fs::path& path) {
+        std::ifstream file(path, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(file)),
+                           std::istreambuf_iterator<char>());
     }
 };
 
@@ -1379,6 +1416,113 @@ TEST_F(PackageTest, Assets_RejectConflictingContentAtTheSamePath) {
     EXPECT_FALSE(result.success) << result.error;
     EXPECT_NE(result.error.find("assets/lidl/dep.lidl"), std::string::npos)
         << result.error;
+}
+
+// =============================================================================
+// Assets-only extraction
+// =============================================================================
+
+// Contract readers need assets/lidl/*.lidl without unpacking a variant's binaries.
+TEST_F(PackageTest, ExtractAssets_WritesOnlyRootAssets) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    ASSERT_NO_FATAL_FAILURE(writePackageWithAssets(pkgPath));
+
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    EXPECT_TRUE(pkg->hasAssets());
+
+    fs::path out = tempDir / "out";
+    auto result = pkg->extractAssets(out);
+    ASSERT_TRUE(result.success) << result.error;
+
+    EXPECT_EQ(listTree(out), (std::set<std::string>{
+        "assets/", "assets/icon.png", "assets/lidl/", "assets/lidl/a.lidl"}));
+    EXPECT_EQ(readFile(out / "assets" / "lidl" / "a.lidl"), kContract);
+    const auto png = lgx_test::makePng();
+    EXPECT_EQ(readFile(out / "assets" / "icon.png"), std::string(png.begin(), png.end()));
+}
+
+TEST_F(PackageTest, ExtractAssets_PackageWithoutAssetsWritesNothing) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    ASSERT_TRUE(Package::create(pkgPath, "testpkg").success);
+
+    fs::path lib = tempDir / "mod.so";
+    createTestFile(lib, "binary");
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    ASSERT_TRUE(pkg->addVariant("linux-amd64", lib).success);
+    ASSERT_TRUE(pkg->save(pkgPath).success);
+
+    pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+    EXPECT_FALSE(pkg->hasAssets());
+
+    fs::path out = tempDir / "out";
+    auto result = pkg->extractAssets(out);
+    EXPECT_TRUE(result.success) << result.error;
+    EXPECT_FALSE(fs::exists(out)) << "not even the output directory may be created";
+}
+
+// Same guard as ExtractVariant_RejectsPathTraversal, on the assets-only path.
+TEST_F(PackageTest, ExtractAssets_RejectsUnsafePaths) {
+    const std::vector<std::string> unsafePaths = {
+        "assets/../../pwned.txt",    // resolves to <tempDir>/pwned.txt
+        "assets/..\\..\\pwned.txt",  // the same escape, spelled for Windows
+    };
+    for (size_t i = 0; i < unsafePaths.size(); ++i) {
+        SCOPED_TRACE(unsafePaths[i]);
+        fs::path pkgPath = tempDir / ("evil" + std::to_string(i) + ".lgx");
+        writeCraftedPackage(pkgPath, unsafePaths[i], "owned");
+
+        auto pkg = Package::load(pkgPath);
+        ASSERT_TRUE(pkg.has_value()) << Package::getLastError();
+        ASSERT_TRUE(pkg->hasAssets());
+
+        fs::path out = tempDir / ("out" + std::to_string(i));
+        auto result = pkg->extractAssets(out);
+
+        EXPECT_FALSE(result.success) << "extractAssets accepted an unsafe path";
+        EXPECT_NE(result.error.find("unsafe archive path"), std::string::npos) << result.error;
+        EXPECT_FALSE(fs::exists(tempDir / "pwned.txt"));
+        EXPECT_FALSE(fs::exists(out));
+    }
+}
+
+// The containment root is the output directory itself here, and "." must work.
+TEST_F(PackageTest, ExtractAssets_RelativeOutputDir) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    ASSERT_NO_FATAL_FAILURE(writePackageWithAssets(pkgPath));
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+
+    fs::path workDir = tempDir / "workdir";
+    fs::create_directories(workDir);
+    CwdGuard guard(workDir);
+
+    auto result = pkg->extractAssets(".");
+    EXPECT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(fs::exists(workDir / "assets" / "lidl" / "a.lidl"));
+    EXPECT_TRUE(fs::exists(workDir / "assets" / "icon.png"));
+}
+
+// Variant extraction shares the writer with extractAssets; its layout must not move.
+TEST_F(PackageTest, ExtractVariant_LayoutUnchangedByAssetsOnlyExtraction) {
+    fs::path pkgPath = tempDir / "test.lgx";
+    ASSERT_NO_FATAL_FAILURE(writePackageWithAssets(pkgPath));
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+
+    fs::path full = tempDir / "full";
+    ASSERT_TRUE(pkg->extractVariant("linux-amd64", full).success);
+    EXPECT_EQ(listTree(full), (std::set<std::string>{
+        "linux-amd64/", "linux-amd64/mod.so",
+        "linux-amd64/assets/", "linux-amd64/assets/icon.png",
+        "linux-amd64/assets/lidl/", "linux-amd64/assets/lidl/a.lidl"}));
+
+    fs::path payload = tempDir / "payload";
+    ASSERT_TRUE(pkg->extractVariantPayload("linux-amd64", payload).success);
+    EXPECT_EQ(listTree(payload), (std::set<std::string>{
+        "linux-amd64/", "linux-amd64/mod.so"}));
 }
 
 // =============================================================================
