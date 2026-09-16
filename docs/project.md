@@ -223,7 +223,9 @@ The limit is configurable two ways:
 | `removeVariant(variant) → Result` | Remove variant |
 | `extractVariant(variant, outputDir) → Result` | Extract variant to directory (rejects unsafe/traversal entry paths; never writes outside `outputDir`) |
 | `extractAll(outputDir) → Result` | Extract all variants to directory (same path-safety enforcement as `extractVariant`) |
+| `extractAssets(outputDir) → Result` | Extract only root `assets/` to `outputDir/assets/`, unpacking no variant (same path-safety enforcement; no assets → success, nothing written) |
 | `hasVariant(variant) → bool` | Check if variant exists |
+| `hasAssets() → bool` | Check if the package has any root `assets/` entry |
 | `getVariants() → set<string>` | Get all variant names |
 | `getManifest() → Manifest&` | Access manifest |
 | `signPackage(secretKey, name, url) → Result` | Sign package with Ed25519 key |
@@ -291,6 +293,7 @@ The header file `src/lgx.h` is installed to `include/` when using `make install`
 - `lgx_add_variant(pkg, variant, files_path, main_path) → lgx_result_t` - Add/replace variant
 - `lgx_remove_variant(pkg, variant) → lgx_result_t` - Remove a variant
 - `lgx_extract(pkg, variant, output_dir) → lgx_result_t` - Extract variant(s) to directory (variant=NULL extracts all)
+- `lgx_extract_assets(pkg, output_dir) → lgx_result_t` - Extract only root `assets/` to `output_dir/assets/`, unpacking no variant
 - `lgx_has_variant(pkg, variant) → bool` - Check if variant exists
 - `lgx_get_variants(pkg) → const char**` - Get NULL-terminated array of variant names (free with `lgx_free_string_array`)
 
@@ -450,19 +453,21 @@ lgx remove mymodule.lgx --variant linux-amd64
 
 ### lgx extract
 
-Extract variant contents from a package.
+Extract variant contents, or only the root assets, from a package.
 
 ```
-lgx extract <pkg.lgx> [--variant <v>] [--output <dir>]
+lgx extract <pkg.lgx> [--variant <v> | --assets-only] [--output <dir>]
 ```
 
 **Arguments:**
 - `pkg.lgx` - Path to package file
 - `--variant, -v` - (Optional) Variant name to extract (extracts all if omitted)
+- `--assets-only` - (Optional) Extract only root `assets/`, no variant; cannot be combined with `--variant`
 - `--output, -o` - (Optional) Output directory (defaults to current directory)
 
 **Output Structure:**
-- Each variant is extracted to `<output>/<variant-name>/`
+- Each variant is extracted to `<output>/<variant-name>/`, with root `assets/` beside its files
+- With `--assets-only`, root assets are extracted to `<output>/assets/`; a package without assets extracts nothing
 
 **Examples:**
 ```bash
@@ -474,6 +479,9 @@ lgx extract mymodule.lgx --variant linux-amd64
 
 # Extract to specific directory
 lgx extract mymodule.lgx -v web -o ./extracted
+
+# Extract only the root assets (e.g. LIDL contracts) to ./contracts/assets/
+lgx extract mymodule.lgx --assets-only -o ./contracts
 ```
 
 ### lgx verify

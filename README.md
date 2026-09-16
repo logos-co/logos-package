@@ -178,6 +178,25 @@ All input packages must have identical manifests (except for the variant-specifi
 lgx merge pkg1.lgx pkg2.lgx pkg3.lgx --skip-duplicates -o mymodule.lgx -y
 ```
 
+### Extract a Package
+
+```bash
+# Every variant, each to ./extracted/<variant>/ with the root assets/ beside its files
+lgx extract mymodule.lgx --output ./extracted
+
+# One variant
+lgx extract mymodule.lgx --variant linux-amd64 --output ./extracted
+
+# Only the platform-independent root assets, to ./contracts/assets/
+lgx extract mymodule.lgx --assets-only --output ./contracts
+cat ./contracts/assets/lidl/mymodule.lidl
+```
+
+`--assets-only` unpacks no variant, so reading a LIDL contract or the icon does
+not write any platform binaries. It cannot be combined with `--variant`. A
+package without root assets extracts nothing and still exits 0. The C API
+equivalent is `lgx_extract_assets()`.
+
 ### Inspect Package Contents
 
 Since `.lgx` files are just `tar.gz` archives:
@@ -193,7 +212,7 @@ tar -tzf mymodule.lgx
 | `lgx create <name>` | Create a new skeleton package |
 | `lgx add <pkg> --variant <v> --files <path> [--main <relpath>] [--view <relpath>] [--assets <dir>] [-y]` | Add variant files and optional platform-independent assets |
 | `lgx remove <pkg> --variant <v> [-y]` | Remove a variant |
-| `lgx extract <pkg> [--variant <v>] [--output <dir>]` | Extract variant contents |
+| `lgx extract <pkg> [--variant <v> \| --assets-only] [--output <dir>]` | Extract variant contents, or only the root assets |
 | `lgx merge <pkg1> <pkg2> ... [-o <output>] [--skip-duplicates] [-y]` | Merge packages into one |
 | `lgx verify <pkg> [--keyring-dir <dir>]` | Validate package structure and signature |
 | `lgx manifest <pkg> [--json]` | Print the embedded `manifest.json` (human-readable or raw bytes) |
