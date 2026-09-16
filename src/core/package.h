@@ -149,6 +149,11 @@ public:
     std::set<std::string> getVariants() const;
     
     /**
+     * Check if the package has any root-level `assets/` entry.
+     */
+    bool hasAssets() const;
+
+    /**
      * Get the manifest.
      */
     Manifest& getManifest() { return manifest_; }
@@ -176,6 +181,15 @@ public:
     Result extractVariantPayload(const std::string& variant,
                                  const std::filesystem::path& outputDir) const;
     
+    /**
+     * Extract only root-level `assets/` to outputDir/assets/, unpacking no variant.
+     * A package without assets succeeds and writes nothing.
+     *
+     * @param outputDir Directory to extract to (assets go to outputDir/assets/)
+     * @return Result indicating success or failure
+     */
+    Result extractAssets(const std::filesystem::path& outputDir) const;
+
     /**
      * Extract all variants to an output directory.
      * 

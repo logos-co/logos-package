@@ -40,15 +40,19 @@ if(LGX_BUILD_SHARED)
         test_lib.cpp
     )
     
+    # lgx_core builds fixtures the C API cannot (root assets, crafted archives);
+    # liblgx hides its C++ symbols, so the two do not clash.
     if(TARGET GTest::gtest)
         target_link_libraries(lgx_lib_tests PRIVATE
             lgx_shared
+            lgx_core
             GTest::gtest
             GTest::gtest_main
         )
     else()
         target_link_libraries(lgx_lib_tests PRIVATE
             lgx_shared
+            lgx_core
             gtest
             gtest_main
         )

@@ -409,6 +409,22 @@ LGX_EXPORT lgx_result_t lgx_extract(lgx_package_t pkg, const char* variant, cons
     return {true, nullptr};
 }
 
+LGX_EXPORT lgx_result_t lgx_extract_assets(lgx_package_t pkg, const char* output_dir) {
+    if (!pkg || !output_dir) {
+        set_error("Invalid arguments: pkg and output_dir cannot be NULL");
+        return {false, g_last_error.c_str()};
+    }
+
+    clear_error();
+    auto result = pkg->pkg->extractAssets(output_dir);
+
+    if (!result.success) {
+        set_error(result.error);
+        return {false, g_last_error.c_str()};
+    }
+    return {true, nullptr};
+}
+
 LGX_EXPORT bool lgx_has_variant(lgx_package_t pkg, const char* variant) {
     if (!pkg || !variant) {
         set_error("Invalid arguments: pkg and variant cannot be NULL");

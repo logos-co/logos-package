@@ -4,6 +4,7 @@
 
 #include <fstream>
 #include <algorithm>
+#include <functional>
 #include <unordered_set>
 
 namespace lgx {
@@ -762,54 +763,43 @@ Package::Result Package::extractVariantPayload(
     return extractVariantImpl(variant, outputDir, false);
 }
 
-Package::Result Package::extractVariantImpl(
-    const std::string& variant,
-    const std::filesystem::path& outputDir,
-    bool includeAssets
-) const {
+namespace {
+
+bool isRootAsset(const std::string& archivePath) {
+    static const std::string prefix = "assets/";
+    return archivePath.compare(0, prefix.size(), prefix) == 0;
+}
+
+// Writes each entry `select` maps to a path under `root` (nullopt skips it),
+// refusing unsafe archive paths and any target that would escape `root`.
+Package::Result extractEntries(
+    const std::vector<TarEntry>& entries,
+    const std::filesystem::path& root,
+    const std::function<std::optional<std::string>(const std::string&)>& select
+) {
+    using Result = Package::Result;
     namespace fs = std::filesystem;
     std::error_code ec;
-    
-    std::string variantLc = PathNormalizer::toLowercase(variant);
-    
-    if (!hasVariant(variantLc)) {
-        return Result::fail("Variant does not exist: " + variant);
-    }
-    
-    fs::path variantOutputDir = outputDir / variantLc;
 
     // Resolve the containment root once. weakly_canonical works even if the
     // directory does not exist yet; fall back to lexical normalization if the
     // filesystem cannot resolve it.
-    fs::path canonRoot = fs::weakly_canonical(variantOutputDir, ec);
+    fs::path canonRoot = fs::weakly_canonical(root, ec);
     if (ec || canonRoot.empty()) {
-        canonRoot = variantOutputDir.lexically_normal();
+        canonRoot = root.lexically_normal();
         ec.clear();
     }
 
-    std::string prefix = "variants/" + variantLc + "/";
-
-    // Root-level `assets/` is variant-independent and must land in the SAME
-    // output directory as the variant contents, because the manifest's `icon`
-    // is documented as relative to the installed package root. Extracting
-    // only `variants/<v>/` left `assets/icon.png` on the floor, so every
-    // installed 0.4.0 package resolved its icon to a missing file and fell
-    // back to the monogram — a regression against 0.3.x, where the icon lived
-    // inside the variant and therefore did extract.
-    const std::string assetsPrefix = "assets/";
-
-    for (const auto& entry : entries_) {
-        const bool inVariant = entry.path.compare(0, prefix.length(), prefix) == 0;
-        const bool inAssets = includeAssets
-            && entry.path.compare(0, assetsPrefix.length(), assetsPrefix) == 0;
-        if (!inVariant && !inAssets) {
+    for (const auto& entry : entries) {
+        const std::optional<std::string> selected = select(entry.path);
+        if (!selected) {
             continue;
         }
 
         // Zip-slip defense. Package::load() stores tar entry paths verbatim and
         // never runs validateArchivePath() on the load->extract path, so a
         // crafted .lgx can carry a "variants/<v>/../../.." entry that satisfies
-        // the prefix test above. Reject any entry the archive validator would
+        // the caller's prefix test. Reject any entry the archive validator would
         // reject (absolute paths, ".." segments, backslashes, non-NFC) before
         // touching the filesystem.
         auto pathValidation = PathNormalizer::validateArchivePath(entry.path);
@@ -818,15 +808,12 @@ Package::Result Package::extractVariantImpl(
                                 entry.path + "': " + pathValidation.error);
         }
 
-        // Variant entries are rebased to the variant root; asset entries keep
-        // their `assets/...` path so the installed layout matches the manifest.
-        std::string relativePath =
-            inVariant ? entry.path.substr(prefix.length()) : entry.path;
+        const std::string& relativePath = *selected;
         if (relativePath.empty()) {
             continue;
         }
 
-        fs::path fullPath = variantOutputDir / relativePath;
+        fs::path fullPath = root / relativePath;
 
         // Defense in depth: the normalized target must stay under canonRoot.
         // Guards against escapes that the per-entry check might miss (e.g. via
@@ -900,6 +887,58 @@ Package::Result Package::extractVariantImpl(
     }
     
     return Result::ok();
+}
+
+} // namespace
+
+bool Package::hasAssets() const {
+    return std::any_of(entries_.begin(), entries_.end(),
+                       [](const TarEntry& entry) { return isRootAsset(entry.path); });
+}
+
+Package::Result Package::extractAssets(const std::filesystem::path& outputDir) const {
+    // Asset entries keep their `assets/...` path, so they land in outputDir/assets/.
+    return extractEntries(entries_, outputDir,
+        [](const std::string& path) -> std::optional<std::string> {
+            if (isRootAsset(path)) {
+                return path;
+            }
+            return std::nullopt;
+        });
+}
+
+Package::Result Package::extractVariantImpl(
+    const std::string& variant,
+    const std::filesystem::path& outputDir,
+    bool includeAssets
+) const {
+    std::string variantLc = PathNormalizer::toLowercase(variant);
+
+    if (!hasVariant(variantLc)) {
+        return Result::fail("Variant does not exist: " + variant);
+    }
+
+    std::string prefix = "variants/" + variantLc + "/";
+
+    // Root-level `assets/` is variant-independent and must land in the SAME
+    // output directory as the variant contents, because the manifest's `icon`
+    // is documented as relative to the installed package root. Extracting
+    // only `variants/<v>/` left `assets/icon.png` on the floor, so every
+    // installed 0.4.0 package resolved its icon to a missing file and fell
+    // back to the monogram — a regression against 0.3.x, where the icon lived
+    // inside the variant and therefore did extract.
+    return extractEntries(entries_, outputDir / variantLc,
+        [&](const std::string& path) -> std::optional<std::string> {
+            // Variant entries are rebased to the variant root; asset entries keep
+            // their `assets/...` path so the installed layout matches the manifest.
+            if (path.compare(0, prefix.length(), prefix) == 0) {
+                return path.substr(prefix.length());
+            }
+            if (includeAssets && isRootAsset(path)) {
+                return path;
+            }
+            return std::nullopt;
+        });
 }
 
 Package::Result Package::extractAll(const std::filesystem::path& outputDir) const {

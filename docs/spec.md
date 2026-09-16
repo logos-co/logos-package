@@ -341,14 +341,14 @@ All archive paths must satisfy:
 
 These rules are enforced both when verifying a package (`lgx verify`) **and at
 extraction time**. Extraction (`lgx extract`, `lgpm install`, and the
-`lgx_extract` C API) re-validates every entry path and additionally checks that
-the resolved destination stays inside the output directory before any file or
-directory is written. A crafted package whose entry escapes the variant root
-(e.g. `variants/<variant>/../../etc/...`) is rejected with an error and **no
-files are written outside the target directory** — even on the unsigned /
-`--allow-unsigned` path, which does not run full package verification. This
-prevents zip-slip / path-traversal arbitrary file writes from an untrusted
-`.lgx`.
+`lgx_extract` / `lgx_extract_assets` C API) re-validates every entry path and
+additionally checks that the resolved destination stays inside the output
+directory before any file or directory is written. A crafted package whose entry
+escapes the variant root (e.g. `variants/<variant>/../../etc/...`) is rejected
+with an error and **no files are written outside the target directory** — even
+on the unsigned / `--allow-unsigned` path, which does not run full package
+verification. This prevents zip-slip / path-traversal arbitrary file writes from
+an untrusted `.lgx`.
 
 **Forbidden File Types:**
 - Symlinks
@@ -468,7 +468,7 @@ lgx remove <pkg.lgx> -v <v> [-y]
 ### Variant Extraction Workflow
 
 ```
-lgx extract <pkg.lgx> [--variant <v>] [--output <dir>]
+lgx extract <pkg.lgx> [--variant <v> | --assets-only] [--output <dir>]
 ```
 
 1. Verify package file exists; if not, exit with error
@@ -495,9 +495,21 @@ lgx extract <pkg.lgx> [--variant <v>] [--output <dir>]
 - The internal variant structure (from `variants/<variant>/`) is preserved
 - For example, `variants/linux-amd64/lib.so` extracts to `<output>/linux-amd64/lib.so`
 
+**Assets-only extraction:**
+
+`--assets-only` (C API `lgx_extract_assets`) extracts root-level `assets/` to
+`<output>/assets/` and unpacks no variant, so a reader can take
+`assets/lidl/<name>.lidl` or the icon without writing platform binaries. The
+Path Safety Rules apply unchanged, with `<output>/` as the containment root. A
+package without root assets extracts nothing and succeeds. Combining
+`--assets-only` with `--variant` is a usage error, because root assets are the
+same for every variant.
+
 **Option Aliases:**
 - `-v` for `--variant`
 - `-o` for `--output`
+
+`--assets-only` has no short alias and takes no value.
 
 ### Package Merge Workflow
 
