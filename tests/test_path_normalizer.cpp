@@ -31,6 +31,21 @@ TEST(PathNormalizerTest, NFCNormalization_NFDtoNFC) {
     EXPECT_EQ(*result, nfc);
 }
 
+TEST(PathNormalizerTest, NFCNormalization_Empty) {
+    auto result = PathNormalizer::toNFC("");
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "");
+    EXPECT_TRUE(PathNormalizer::isNFC(""));
+    EXPECT_EQ(PathNormalizer::toLowercase(""), "");
+}
+
+TEST(PathNormalizerTest, NFCNormalization_IllFormedUtf8BecomesReplacement) {
+    // A lone continuation byte is substituted with U+FFFD, not rejected.
+    auto result = PathNormalizer::toNFC("a\x80z");
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "a\xEF\xBF\xBDz");
+}
+
 TEST(PathNormalizerTest, IsNFC_True) {
     EXPECT_TRUE(PathNormalizer::isNFC("hello"));
     EXPECT_TRUE(PathNormalizer::isNFC("héllo"));  // NFC form

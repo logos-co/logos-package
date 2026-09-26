@@ -1,8 +1,9 @@
 #include "path_normalizer.h"
 
-#include <unicode/normalizer2.h>
-#include <unicode/unistr.h>
-#include <unicode/uchar.h>
+// ICU's C API only: Android's platform ICU (libicu.so, API 31+) exports
+// nothing else.
+#include <unicode/unorm2.h>
+#include <unicode/ustring.h>
 #include <unicode/utypes.h>
 
 #include <algorithm>
@@ -10,42 +11,83 @@
 
 namespace lgx {
 
+namespace {
+
+static_assert(sizeof(UChar) == sizeof(char16_t), "UChar is UTF-16");
+
+UChar* units(std::u16string& s) { return reinterpret_cast<UChar*>(s.data()); }
+const UChar* units(const std::u16string& s) { return reinterpret_cast<const UChar*>(s.data()); }
+int32_t length(const std::u16string& s) { return static_cast<int32_t>(s.size()); }
+
+// Runs a preflight-then-fill ICU call; `fill(dest, capacity, status)` returns
+// the full length. nullopt on any error but the preflight's overflow.
+template <typename Fill>
+std::optional<std::u16string> produce(Fill fill)
+{
+    UErrorCode status = U_ZERO_ERROR;
+    const int32_t needed = fill(nullptr, 0, &status);
+    if (U_FAILURE(status) && status != U_BUFFER_OVERFLOW_ERROR) return std::nullopt;
+    std::u16string out(static_cast<size_t>(needed), u'\0');
+    status = U_ZERO_ERROR;
+    fill(units(out), needed, &status);
+    if (U_FAILURE(status)) return std::nullopt;
+    return out;
+}
+
+// Ill-formed input becomes U+FFFD, as icu::UnicodeString::fromUTF8 did.
+std::u16string fromUtf8(const std::string& s)
+{
+    auto out = produce([&](UChar* dest, int32_t capacity, UErrorCode* status) {
+        int32_t needed = 0;
+        u_strFromUTF8WithSub(dest, capacity, &needed, s.data(), static_cast<int32_t>(s.size()),
+                             0xFFFD, nullptr, status);
+        return needed;
+    });
+    return out ? std::move(*out) : std::u16string();
+}
+
+// Unpaired surrogates become U+FFFD, as UnicodeString::toUTF8String did.
+std::string toUtf8(const std::u16string& s)
+{
+    UErrorCode status = U_ZERO_ERROR;
+    int32_t needed = 0;
+    u_strToUTF8WithSub(nullptr, 0, &needed, units(s), length(s), 0xFFFD, nullptr, &status);
+    if (U_FAILURE(status) && status != U_BUFFER_OVERFLOW_ERROR) return {};
+    std::string out(static_cast<size_t>(needed), '\0');
+    status = U_ZERO_ERROR;
+    u_strToUTF8WithSub(out.data(), needed, nullptr, units(s), length(s), 0xFFFD, nullptr, &status);
+    return U_SUCCESS(status) ? out : std::string();
+}
+
+} // namespace
+
 std::optional<std::string> PathNormalizer::toNFC(const std::string& path) {
     UErrorCode status = U_ZERO_ERROR;
-    const icu::Normalizer2* normalizer = icu::Normalizer2::getNFCInstance(status);
-    
+    const UNormalizer2* normalizer = unorm2_getNFCInstance(&status);
     if (U_FAILURE(status)) {
         return std::nullopt;
     }
-    
-    // Convert UTF-8 to ICU UnicodeString
-    icu::UnicodeString ustr = icu::UnicodeString::fromUTF8(path);
-    
-    // Normalize to NFC
-    icu::UnicodeString normalized;
-    normalizer->normalize(ustr, normalized, status);
-    
-    if (U_FAILURE(status)) {
+
+    const std::u16string source = fromUtf8(path);
+    auto normalized = produce([&](UChar* dest, int32_t capacity, UErrorCode* st) {
+        return unorm2_normalize(normalizer, units(source), length(source), dest, capacity, st);
+    });
+    if (!normalized) {
         return std::nullopt;
     }
-    
-    // Convert back to UTF-8
-    std::string result;
-    normalized.toUTF8String(result);
-    
-    return result;
+    return toUtf8(*normalized);
 }
 
 bool PathNormalizer::isNFC(const std::string& str) {
     UErrorCode status = U_ZERO_ERROR;
-    const icu::Normalizer2* normalizer = icu::Normalizer2::getNFCInstance(status);
-    
+    const UNormalizer2* normalizer = unorm2_getNFCInstance(&status);
     if (U_FAILURE(status)) {
         return false;
     }
-    
-    icu::UnicodeString ustr = icu::UnicodeString::fromUTF8(str);
-    return normalizer->isNormalized(ustr, status) && U_SUCCESS(status);
+
+    const std::u16string source = fromUtf8(str);
+    const bool normalized = unorm2_isNormalized(normalizer, units(source), length(source), &status);
+    return normalized && U_SUCCESS(status);
 }
 
 PathNormalizer::ValidationResult PathNormalizer::validateArchivePath(const std::string& archivePath) {
@@ -106,13 +148,12 @@ std::string PathNormalizer::normalizeSeparators(const std::string& path) {
 }
 
 std::string PathNormalizer::toLowercase(const std::string& str) {
-    UErrorCode status = U_ZERO_ERROR;
-    icu::UnicodeString ustr = icu::UnicodeString::fromUTF8(str);
-    ustr.toLower();
-    
-    std::string result;
-    ustr.toUTF8String(result);
-    return result;
+    const std::u16string source = fromUtf8(str);
+    // A null locale is ICU's default locale, as UnicodeString::toLower() used.
+    auto lowered = produce([&](UChar* dest, int32_t capacity, UErrorCode* status) {
+        return u_strToLower(dest, capacity, units(source), length(source), nullptr, status);
+    });
+    return lowered ? toUtf8(*lowered) : std::string();
 }
 
 std::string PathNormalizer::joinPath(const std::vector<std::string>& components) {

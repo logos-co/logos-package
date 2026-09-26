@@ -41,7 +41,17 @@ if(APPLE)
     endif()
 endif()
 
-find_package(ICU REQUIRED COMPONENTS uc i18n)
+# liblgx uses ICU's C API only. Android ships that API as the platform's
+# libicu.so (API 31+), so an Android build links it instead of an ICU of its own.
+option(LGX_PLATFORM_ICU "Link the platform's libicu (Android) instead of ICU" OFF)
+add_library(lgx_icu INTERFACE)
+if(LGX_PLATFORM_ICU)
+    target_link_libraries(lgx_icu INTERFACE icu)
+    target_compile_definitions(lgx_icu INTERFACE U_DISABLE_RENAMING=1 U_SHOW_CPLUSPLUS_API=0)
+else()
+    find_package(ICU REQUIRED COMPONENTS uc i18n)
+    target_link_libraries(lgx_icu INTERFACE ICU::uc ICU::i18n)
+endif()
 
 # Try to find nlohmann_json first (for Nix and system installations)
 # Fall back to FetchContent if not found
@@ -107,8 +117,7 @@ target_include_directories(lgx_core PUBLIC
 
 target_link_libraries(lgx_core PUBLIC
     ZLIB::ZLIB
-    ICU::uc
-    ICU::i18n
+    lgx_icu
     nlohmann_json::nlohmann_json
     semver::semver
     ${SODIUM_LIBRARIES}
@@ -141,8 +150,7 @@ if(LGX_BUILD_SHARED)
 
     target_link_libraries(lgx_shared PUBLIC
         ZLIB::ZLIB
-        ICU::uc
-        ICU::i18n
+        lgx_icu
         nlohmann_json::nlohmann_json
         semver::semver
         ${SODIUM_LIBRARIES}
