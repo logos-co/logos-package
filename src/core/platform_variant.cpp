@@ -1,5 +1,9 @@
 #include "platform_variant.h"
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
 #include <algorithm>
 
 namespace lgx {
@@ -50,7 +54,16 @@ const std::vector<std::vector<std::string>>& architectureSpellings()
 
 std::string hostVariant()
 {
-#if defined(__APPLE__)
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    // A simulator binary runs on no device, nor the reverse: two variants.
+    #if TARGET_OS_SIMULATOR && defined(__x86_64__)
+        return "ios-sim-x86_64";
+    #elif TARGET_OS_SIMULATOR
+        return "ios-sim-arm64";
+    #else
+        return "ios-arm64";
+    #endif
+#elif defined(__APPLE__)
     #if defined(__aarch64__)
         return "darwin-arm64";
     #else

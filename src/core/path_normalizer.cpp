@@ -1,10 +1,17 @@
 #include "path_normalizer.h"
 
+#if defined(LGX_UNICODE_CF)
+// CoreFoundation instead of ICU (LGX_UNICODE_CF): iOS has no public unorm2.
+#include <CoreFoundation/CoreFoundation.h>
+#include <memory>
+#include <type_traits>
+#else
 // ICU's C API only: Android's platform ICU (libicu.so, API 31+) exports
 // nothing else.
 #include <unicode/unorm2.h>
 #include <unicode/ustring.h>
 #include <unicode/utypes.h>
+#endif
 
 #include <algorithm>
 #include <sstream>
@@ -12,6 +19,109 @@
 namespace lgx {
 
 namespace {
+
+#if defined(LGX_UNICODE_CF)
+
+// Ill-formed input becomes one U+FFFD per maximal subpart, as ICU's
+// u_strFromUTF8WithSub makes it.
+std::u16string fromUtf8(const std::string& s)
+{
+    std::u16string out;
+    out.reserve(s.size());
+    const auto* bytes = reinterpret_cast<const unsigned char*>(s.data());
+    size_t i = 0;
+    while (i < s.size()) {
+        const unsigned char lead = bytes[i];
+        size_t length = 0;
+        unsigned char low = 0x80, high = 0xBF; // the second byte's range
+        char32_t cp = 0;
+        if (lead < 0x80) {
+            length = 1;
+            cp = lead;
+        } else if (lead >= 0xC2 && lead <= 0xDF) {
+            length = 2;
+            cp = lead & 0x1F;
+        } else if (lead >= 0xE0 && lead <= 0xEF) {
+            length = 3;
+            cp = lead & 0x0F;
+            if (lead == 0xE0) low = 0xA0;
+            if (lead == 0xED) high = 0x9F;
+        } else if (lead >= 0xF0 && lead <= 0xF4) {
+            length = 4;
+            cp = lead & 0x07;
+            if (lead == 0xF0) low = 0x90;
+            if (lead == 0xF4) high = 0x8F;
+        }
+        size_t n = 1;
+        for (; n < length && i + n < s.size(); ++n) {
+            const unsigned char c = bytes[i + n];
+            if (c < (n == 1 ? low : 0x80) || c > (n == 1 ? high : 0xBF)) break;
+            cp = (cp << 6) | (c & 0x3F);
+        }
+        i += n;
+        if (n < length || length == 0) {
+            out.push_back(0xFFFD);
+        } else if (cp < 0x10000) {
+            out.push_back(static_cast<char16_t>(cp));
+        } else {
+            cp -= 0x10000;
+            out.push_back(static_cast<char16_t>(0xD800 + (cp >> 10)));
+            out.push_back(static_cast<char16_t>(0xDC00 + (cp & 0x3FF)));
+        }
+    }
+    return out;
+}
+
+struct CFReleaser {
+    void operator()(CFTypeRef ref) const { CFRelease(ref); }
+};
+using MutableString = std::unique_ptr<std::remove_pointer_t<CFMutableStringRef>, CFReleaser>;
+
+MutableString makeString(const std::u16string& s)
+{
+    MutableString str(CFStringCreateMutable(kCFAllocatorDefault, 0));
+    if (str) {
+        CFStringAppendCharacters(str.get(), reinterpret_cast<const UniChar*>(s.data()),
+                                 static_cast<CFIndex>(s.size()));
+    }
+    return str;
+}
+
+// Lossless: what fromUtf8 builds, normalized or lowercased, has no lone surrogate.
+std::string toUtf8(CFStringRef s)
+{
+    const CFRange all = CFRangeMake(0, CFStringGetLength(s));
+    CFIndex size = 0;
+    CFStringGetBytes(s, all, kCFStringEncodingUTF8, 0, false, nullptr, 0, &size);
+    std::string out(static_cast<size_t>(size), '\0');
+    CFStringGetBytes(s, all, kCFStringEncodingUTF8, 0, false,
+                     reinterpret_cast<UInt8*>(out.data()), size, nullptr);
+    return out;
+}
+
+} // namespace
+
+std::optional<std::string> PathNormalizer::toNFC(const std::string& path) {
+    MutableString normalized = makeString(fromUtf8(path));
+    if (!normalized) {
+        return std::nullopt;
+    }
+    CFStringNormalize(normalized.get(), kCFStringNormalizationFormC);
+    return toUtf8(normalized.get());
+}
+
+bool PathNormalizer::isNFC(const std::string& str) {
+    const std::u16string source = fromUtf8(str);
+    MutableString original = makeString(source);
+    MutableString normalized = makeString(source);
+    if (!original || !normalized) {
+        return false;
+    }
+    CFStringNormalize(normalized.get(), kCFStringNormalizationFormC);
+    return CFEqual(original.get(), normalized.get());
+}
+
+#else
 
 static_assert(sizeof(UChar) == sizeof(char16_t), "UChar is UTF-16");
 
@@ -90,6 +200,8 @@ bool PathNormalizer::isNFC(const std::string& str) {
     return normalized && U_SUCCESS(status);
 }
 
+#endif
+
 PathNormalizer::ValidationResult PathNormalizer::validateArchivePath(const std::string& archivePath) {
     // Check for empty path
     if (archivePath.empty()) {
@@ -147,6 +259,17 @@ std::string PathNormalizer::normalizeSeparators(const std::string& path) {
     return result;
 }
 
+#if defined(LGX_UNICODE_CF)
+std::string PathNormalizer::toLowercase(const std::string& str) {
+    // A null locale is the locale-independent mapping.
+    MutableString lowered = makeString(fromUtf8(str));
+    if (!lowered) {
+        return std::string();
+    }
+    CFStringLowercase(lowered.get(), nullptr);
+    return toUtf8(lowered.get());
+}
+#else
 std::string PathNormalizer::toLowercase(const std::string& str) {
     const std::u16string source = fromUtf8(str);
     // A null locale is ICU's default locale, as UnicodeString::toLower() used.
@@ -155,6 +278,7 @@ std::string PathNormalizer::toLowercase(const std::string& str) {
     });
     return lowered ? toUtf8(*lowered) : std::string();
 }
+#endif
 
 std::string PathNormalizer::joinPath(const std::vector<std::string>& components) {
     if (components.empty()) {
