@@ -2,6 +2,10 @@
 
 #include <cstring>
 #include <algorithm>
+#include <array>
+#include <fstream>
+#include <limits>
+#include <zlib.h>
 
 namespace lgx {
 
@@ -182,6 +186,125 @@ TarReader::ReadResult TarReader::read(const std::vector<uint8_t>& tarData) {
         entries.push_back(std::move(entry));
     }
     
+    return ReadResult::ok(std::move(entries));
+}
+
+TarReader::ReadResult TarReader::readGzipFile(const std::filesystem::path& path,
+                                               size_t maxOutputSize) {
+    // gzopen transparently accepts plain files. LGX files must actually be
+    // gzip streams, just as GzipHandler::decompress required before this path.
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return ReadResult::fail("Cannot open file: " + path.string());
+    unsigned char magic[2]{};
+    input.read(reinterpret_cast<char*>(magic), sizeof(magic));
+    if (input.gcount() != sizeof(magic) || magic[0] != 0x1f || magic[1] != 0x8b)
+        return ReadResult::fail("Not valid gzip data");
+    input.close();
+
+#ifdef _WIN32
+    gzFile stream = gzopen_w(path.c_str(), "rb");
+#else
+    gzFile stream = gzopen(path.c_str(), "rb");
+#endif
+    if (!stream) return ReadResult::fail("Cannot open file: " + path.string());
+
+    size_t outputBytes = 0;
+    std::string readError;
+    bool atEof = false;
+    auto readBytes = [&](uint8_t* destination, size_t length, bool allowEof = false) {
+        size_t done = 0;
+        while (done < length) {
+            const auto chunk = static_cast<unsigned>(std::min<size_t>(length - done, 32768));
+            const int got = gzread(stream, destination + done, chunk);
+            if (got <= 0) {
+                if (got == 0 && gzeof(stream)) {
+                    if (done == 0 && allowEof) {
+                        atEof = true;
+                        return true;
+                    }
+                    readError = "Truncated tar data";
+                } else {
+                    int zlibCode = Z_OK;
+                    const char* detail = gzerror(stream, &zlibCode);
+                    readError = "Failed to decompress: " +
+                                std::string(detail ? detail : "unknown zlib error");
+                }
+                return false;
+            }
+            if (static_cast<size_t>(got) > maxOutputSize - outputBytes) {
+                readError = "Decompressed size exceeds limit of " +
+                            std::to_string(maxOutputSize) + " bytes";
+                return false;
+            }
+            outputBytes += static_cast<size_t>(got);
+            done += static_cast<size_t>(got);
+        }
+        return true;
+    };
+
+    std::vector<TarEntry> entries;
+    std::vector<uint8_t> header(BLOCK_SIZE);
+    std::array<uint8_t, 32768> scratch{};
+    int zeroBlocks = 0;
+
+    while (true) {
+        if (!readBytes(header.data(), header.size(), true)) break;
+        if (atEof) break;
+
+        if (isZeroBlock(header.data())) {
+            if (++zeroBlocks >= 2) {
+                // Drain to the gzip trailer so CRC errors and an oversized
+                // trailing stream cannot be accepted after the tar end marker.
+                while (true) {
+                    const int got = gzread(stream, scratch.data(),
+                                           static_cast<unsigned>(scratch.size()));
+                    if (got < 0) {
+                        int zlibCode = Z_OK;
+                        const char* detail = gzerror(stream, &zlibCode);
+                        readError = "Failed to decompress: " +
+                                    std::string(detail ? detail : "unknown zlib error");
+                        break;
+                    }
+                    if (got == 0) break;
+                    if (static_cast<size_t>(got) > maxOutputSize - outputBytes) {
+                        readError = "Decompressed size exceeds limit of " +
+                                    std::to_string(maxOutputSize) + " bytes";
+                        break;
+                    }
+                    outputBytes += static_cast<size_t>(got);
+                }
+                break;
+            }
+            continue;
+        }
+        zeroBlocks = 0;
+
+        auto info = parseHeader(header, 0);
+        if (!info) {
+            readError = lastError_;
+            break;
+        }
+        TarEntry entry(info->path, info->isDirectory, info->mode);
+        if (info->isRegularFile && info->size > 0) {
+            if (info->size > std::numeric_limits<size_t>::max() ||
+                static_cast<size_t>(info->size) > maxOutputSize - outputBytes) {
+                readError = "Decompressed size exceeds limit of " +
+                            std::to_string(maxOutputSize) + " bytes";
+                break;
+            }
+            entry.data.resize(static_cast<size_t>(info->size));
+            if (!readBytes(entry.data.data(), entry.data.size())) break;
+
+            const size_t padding = (BLOCK_SIZE - (entry.data.size() % BLOCK_SIZE)) % BLOCK_SIZE;
+            if (padding && !readBytes(scratch.data(), padding)) break;
+        }
+        entries.push_back(std::move(entry));
+    }
+
+    const int closeResult = gzclose(stream);
+    if (readError.empty() && closeResult != Z_OK)
+        readError = "Failed to close gzip stream";
+    if (!readError.empty()) return ReadResult::fail(readError);
     return ReadResult::ok(std::move(entries));
 }
 

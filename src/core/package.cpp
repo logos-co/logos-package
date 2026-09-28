@@ -164,30 +164,12 @@ Package::Result Package::create(
 }
 
 std::optional<Package> Package::load(const std::filesystem::path& lgxPath) {
-    // Read file
-    std::ifstream file(lgxPath, std::ios::binary);
-    if (!file) {
-        lastError_ = "Cannot open file: " + lgxPath.string();
-        return std::nullopt;
-    }
-    
-    std::vector<uint8_t> gzipData(
-        (std::istreambuf_iterator<char>(file)),
-        std::istreambuf_iterator<char>()
-    );
-    file.close();
-    
-    // Decompress
-    auto tarData = GzipHandler::decompress(gzipData);
-    if (tarData.empty() && !gzipData.empty()) {
-        lastError_ = "Failed to decompress: " + GzipHandler::getLastError();
-        return std::nullopt;
-    }
-    
-    // Read tar
-    auto readResult = TarReader::read(tarData);
+    // Parse as the gzip stream is inflated. The old path retained the whole
+    // compressed file, the whole tar, and a copy of every tar entry at once.
+    auto readResult = TarReader::readGzipFile(
+        lgxPath, GzipHandler::getDefaultMaxDecompressedSize());
     if (!readResult.success) {
-        lastError_ = "Failed to read tar: " + readResult.error;
+        lastError_ = "Failed to read package: " + readResult.error;
         return std::nullopt;
     }
     

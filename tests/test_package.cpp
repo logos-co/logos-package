@@ -180,6 +180,36 @@ TEST_F(PackageTest, Load_InvalidFile) {
     EXPECT_FALSE(pkg.has_value());
 }
 
+TEST_F(PackageTest, Load_RejectsCorruptGzipTrailer) {
+    const fs::path pkgPath = tempDir / "corrupt.lgx";
+    ASSERT_TRUE(Package::create(pkgPath, "testpkg").success);
+
+    std::fstream file(pkgPath, std::ios::in | std::ios::out | std::ios::binary);
+    ASSERT_TRUE(file.is_open());
+    file.seekg(-1, std::ios::end);
+    char trailerByte = 0;
+    file.read(&trailerByte, 1);
+    file.seekp(-1, std::ios::end);
+    trailerByte ^= 0x7f;
+    file.write(&trailerByte, 1);
+    file.close();
+
+    EXPECT_FALSE(Package::load(pkgPath).has_value());
+}
+
+TEST_F(PackageTest, Load_EnforcesDecompressedSizeLimitWhileStreaming) {
+    const fs::path pkgPath = tempDir / "limited.lgx";
+    ASSERT_TRUE(Package::create(pkgPath, "testpkg").success);
+
+    const size_t previousLimit = GzipHandler::getDefaultMaxDecompressedSize();
+    GzipHandler::setDefaultMaxDecompressedSize(512);
+    const auto loaded = Package::load(pkgPath);
+    GzipHandler::setDefaultMaxDecompressedSize(previousLimit);
+
+    EXPECT_FALSE(loaded.has_value());
+    EXPECT_NE(Package::getLastError().find("exceeds limit"), std::string::npos);
+}
+
 // =============================================================================
 // Add Single File Variant Tests
 // =============================================================================
