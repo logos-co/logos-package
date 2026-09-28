@@ -7,6 +7,11 @@
 #include <limits>
 #include <zlib.h>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 namespace lgx {
 
 thread_local std::string TarReader::lastError_;
@@ -202,7 +207,12 @@ TarReader::ReadResult TarReader::readGzipFile(const std::filesystem::path& path,
     input.close();
 
 #ifdef _WIN32
-    gzFile stream = gzopen_w(path.c_str(), "rb");
+    // The MinGW zlib import library does not export gzopen_w. Open the wide
+    // path with the CRT, then transfer ownership of its descriptor to zlib.
+    const int fd = _wopen(path.c_str(), _O_RDONLY | _O_BINARY);
+    if (fd < 0) return ReadResult::fail("Cannot open file: " + path.string());
+    gzFile stream = gzdopen(fd, "rb");
+    if (!stream) _close(fd);
 #else
     gzFile stream = gzopen(path.c_str(), "rb");
 #endif
