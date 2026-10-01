@@ -115,12 +115,13 @@ logos-package/
 - No original filename
 - OS byte = 0xFF (unknown)
 
-**Decompression-bomb protection:** Both decompression paths enforce a hard cap on
+**Decompression-bomb protection:** Both gzip helpers and the package loader enforce a hard cap on
 total decompressed output (`DEFAULT_MAX_DECOMPRESSED_SIZE` = 1 GiB by default). A
 gzip stream that would inflate past the cap is rejected before the excess bytes
 are materialized, so a tiny but highly-compressible archive cannot exhaust host
-memory. `Package::load()` decompresses untrusted `.lgx` data through this guard,
-which also bounds the buffer handed to `TarReader`.
+memory. `Package::load()` streams gzip data directly into tar entries via
+`TarReader::readGzipFile`, using the same library-wide cap. It does not retain
+the compressed file or a full decompressed tar buffer.
 
 The limit is configurable two ways:
 - **Library-wide:** `setDefaultMaxDecompressedSize(bytes)` changes the default

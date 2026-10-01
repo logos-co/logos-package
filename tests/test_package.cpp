@@ -6,12 +6,18 @@
 #include "crypto/signing.h"
 #include "crypto/keyring.h"
 
+#include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <set>
 #include <vector>
 
 #include "test_png.h"
+
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
 
 using namespace lgx;
 namespace fs = std::filesystem;
@@ -178,6 +184,105 @@ TEST_F(PackageTest, Load_InvalidFile) {
     auto pkg = Package::load(pkgPath);
     
     EXPECT_FALSE(pkg.has_value());
+}
+
+TEST_F(PackageTest, Load_RejectsCorruptGzipTrailer) {
+    const fs::path pkgPath = tempDir / "corrupt.lgx";
+    ASSERT_TRUE(Package::create(pkgPath, "testpkg").success);
+
+    std::fstream file(pkgPath, std::ios::in | std::ios::out | std::ios::binary);
+    ASSERT_TRUE(file.is_open());
+    file.seekg(-1, std::ios::end);
+    char trailerByte = 0;
+    file.read(&trailerByte, 1);
+    file.seekp(-1, std::ios::end);
+    trailerByte ^= 0x7f;
+    file.write(&trailerByte, 1);
+    file.close();
+
+    EXPECT_FALSE(Package::load(pkgPath).has_value());
+}
+
+TEST_F(PackageTest, Load_RejectsEntryLargerThanRemainingLimit) {
+    const fs::path pkgPath = tempDir / "limited.lgx";
+    ASSERT_TRUE(Package::create(pkgPath, "testpkg").success);
+
+    const size_t previousLimit = GzipHandler::getDefaultMaxDecompressedSize();
+    GzipHandler::setDefaultMaxDecompressedSize(512);
+    const auto loaded = Package::load(pkgPath);
+    GzipHandler::setDefaultMaxDecompressedSize(previousLimit);
+
+    EXPECT_FALSE(loaded.has_value());
+    EXPECT_NE(Package::getLastError().find("exceeds limit"), std::string::npos);
+}
+
+TEST_F(PackageTest, Load_EnforcesDecompressedSizeLimitWhileStreaming) {
+    // Every entry fits the cap; only the running total over the bytes after
+    // the tar end marker exceeds it.
+    const fs::path pkgPath = tempDir / "trailing.lgx";
+    ASSERT_TRUE(Package::create(pkgPath, "testpkg").success);
+    std::ifstream in(pkgPath, std::ios::binary);
+    auto tar = GzipHandler::decompress(std::vector<uint8_t>(
+        (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()));
+    in.close();
+    ASSERT_FALSE(tar.empty());
+    const size_t tarSize = tar.size();
+    tar.resize(tarSize + 65536, 0);
+    const auto gz = GzipHandler::compress(tar);
+    std::ofstream(pkgPath, std::ios::binary | std::ios::trunc)
+        .write(reinterpret_cast<const char*>(gz.data()), static_cast<std::streamsize>(gz.size()));
+
+    const size_t previousLimit = GzipHandler::getDefaultMaxDecompressedSize();
+    GzipHandler::setDefaultMaxDecompressedSize(tarSize);
+    const auto rejected = Package::load(pkgPath);
+    const std::string error = Package::getLastError();
+    GzipHandler::setDefaultMaxDecompressedSize(tar.size());
+    const auto accepted = Package::load(pkgPath);
+    GzipHandler::setDefaultMaxDecompressedSize(previousLimit);
+
+    EXPECT_FALSE(rejected.has_value());
+    EXPECT_NE(error.find("exceeds limit"), std::string::npos) << error;
+    EXPECT_TRUE(accepted.has_value()) << Package::getLastError();
+}
+
+TEST_F(PackageTest, Load_HeaderSizeDoesNotPreallocateEntry) {
+    // A lone header claiming 512 MiB, with no data behind it: the loader must
+    // fail on the missing bytes without first allocating the claimed size.
+    std::vector<uint8_t> header(512, 0);
+    auto* h = reinterpret_cast<char*>(header.data());
+    std::memcpy(h, "manifest.json", 13);
+    std::snprintf(h + 100, 8, "%07o", 0644);
+    std::snprintf(h + 124, 12, "%011llo", 512ull * 1024 * 1024);
+    h[156] = '0';
+    std::memcpy(h + 257, "ustar\0" "00", 8);
+    unsigned checksum = 0;
+    for (size_t i = 0; i < header.size(); ++i)
+        checksum += (i >= 148 && i < 156) ? ' ' : header[i];
+    std::snprintf(h + 148, 8, "%06o", checksum);
+    h[155] = ' ';
+
+    const fs::path pkgPath = tempDir / "claims-512mib.lgx";
+    const auto gz = GzipHandler::compress(header);
+    std::ofstream(pkgPath, std::ios::binary)
+        .write(reinterpret_cast<const char*>(gz.data()), static_cast<std::streamsize>(gz.size()));
+
+#ifndef _WIN32
+    rusage before{};
+    getrusage(RUSAGE_SELF, &before);
+#endif
+    EXPECT_FALSE(Package::load(pkgPath).has_value());
+    EXPECT_NE(Package::getLastError().find("Truncated tar data"), std::string::npos)
+        << Package::getLastError();
+#ifndef _WIN32
+    rusage after{};
+    getrusage(RUSAGE_SELF, &after);
+#ifdef __APPLE__
+    const long long grownMiB = (after.ru_maxrss - before.ru_maxrss) / (1024 * 1024);
+#else
+    const long long grownMiB = (after.ru_maxrss - before.ru_maxrss) / 1024;
+#endif
+    EXPECT_LT(grownMiB, 64);
+#endif
 }
 
 // =============================================================================

@@ -372,9 +372,10 @@ inflates and rejects the stream the moment the output would exceed the cap,
 before the excess bytes are allocated — so the cost of an oversized archive is
 bounded regardless of how small the compressed input is. Loading an untrusted
 `.lgx` (`lgx verify`, `lgpm install`, signature inspection, the `lgx_*` C API)
-runs through this guard, which also bounds the buffer subsequently handed to the
-tar reader. A package whose contents exceed the cap is rejected with an error
-and no oversized buffer is ever materialized.
+uses the same running-total cap in the tar reader. The load path streams the
+archive into entries, so it does not retain a full compressed or decompressed
+archive buffer. A package whose contents exceed the cap is rejected with an
+error and no oversized buffer is ever materialized.
 
 The cap applies to the **whole archive** — the total size of the decompressed
 tar (every entry plus tar overhead), not any single file within it. It is

@@ -8,6 +8,7 @@
 #include <optional>
 #include <functional>
 #include <map>
+#include <filesystem>
 
 namespace lgx {
 
@@ -57,6 +58,11 @@ public:
      * @return ReadResult containing entries or error
      */
     static ReadResult read(const std::vector<uint8_t>& tarData);
+
+    /** Read a gzip-compressed tar file directly into entries, without
+     * retaining the compressed file or a second copy of the full tar. */
+    static ReadResult readGzipFile(const std::filesystem::path& path,
+                                   size_t maxOutputSize);
     
     /**
      * Read only entry info (without file contents).
