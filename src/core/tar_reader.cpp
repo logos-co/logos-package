@@ -3,7 +3,6 @@
 #include <cstring>
 #include <algorithm>
 #include <array>
-#include <fstream>
 #include <limits>
 #include <zlib.h>
 
@@ -196,16 +195,6 @@ TarReader::ReadResult TarReader::read(const std::vector<uint8_t>& tarData) {
 
 TarReader::ReadResult TarReader::readGzipFile(const std::filesystem::path& path,
                                                size_t maxOutputSize) {
-    // gzopen transparently accepts plain files. LGX files must actually be
-    // gzip streams, just as GzipHandler::decompress required before this path.
-    std::ifstream input(path, std::ios::binary);
-    if (!input) return ReadResult::fail("Cannot open file: " + path.string());
-    unsigned char magic[2]{};
-    input.read(reinterpret_cast<char*>(magic), sizeof(magic));
-    if (input.gcount() != sizeof(magic) || magic[0] != 0x1f || magic[1] != 0x8b)
-        return ReadResult::fail("Not valid gzip data");
-    input.close();
-
 #ifdef _WIN32
     // The MinGW zlib import library does not export gzopen_w. Open the wide
     // path with the CRT, then transfer ownership of its descriptor to zlib.
@@ -218,38 +207,52 @@ TarReader::ReadResult TarReader::readGzipFile(const std::filesystem::path& path,
 #endif
     if (!stream) return ReadResult::fail("Cannot open file: " + path.string());
 
+    // gzread passes non-gzip (and empty) files through verbatim; LGX files
+    // must be gzip streams, as GzipHandler::decompress required.
+    if (gzdirect(stream)) {
+        gzclose(stream);
+        return ReadResult::fail("Not valid gzip data");
+    }
+
+    // DEFLATE inflates at most 1032:1.
+    std::error_code sizeError;
+    const auto compressedSize = std::filesystem::file_size(path, sizeError);
+    const size_t inflateBound =
+        sizeError || compressedSize > std::numeric_limits<size_t>::max() / 1032
+            ? std::numeric_limits<size_t>::max()
+            : static_cast<size_t>(compressedSize) * 1032;
+
     size_t outputBytes = 0;
     std::string readError;
-    bool atEof = false;
-    auto readBytes = [&](uint8_t* destination, size_t length, bool allowEof = false) {
+    // Reads until `length` bytes or the end of the stream, counting against
+    // the cap. Returns the bytes read, or nullopt with readError set.
+    auto readUpTo = [&](uint8_t* destination, size_t length) -> std::optional<size_t> {
         size_t done = 0;
         while (done < length) {
             const auto chunk = static_cast<unsigned>(std::min<size_t>(length - done, 32768));
             const int got = gzread(stream, destination + done, chunk);
-            if (got <= 0) {
-                if (got == 0 && gzeof(stream)) {
-                    if (done == 0 && allowEof) {
-                        atEof = true;
-                        return true;
-                    }
-                    readError = "Truncated tar data";
-                } else {
-                    int zlibCode = Z_OK;
-                    const char* detail = gzerror(stream, &zlibCode);
-                    readError = "Failed to decompress: " +
-                                std::string(detail ? detail : "unknown zlib error");
-                }
-                return false;
+            int zlibCode = Z_OK;
+            const char* detail = gzerror(stream, &zlibCode);
+            if (got < 0 || zlibCode != Z_OK) {
+                readError = "Failed to decompress: " +
+                            std::string(detail ? detail : "unknown zlib error");
+                return std::nullopt;
             }
+            if (got == 0) break;
             if (static_cast<size_t>(got) > maxOutputSize - outputBytes) {
                 readError = "Decompressed size exceeds limit of " +
                             std::to_string(maxOutputSize) + " bytes";
-                return false;
+                return std::nullopt;
             }
             outputBytes += static_cast<size_t>(got);
             done += static_cast<size_t>(got);
         }
-        return true;
+        return done;
+    };
+    auto readExactly = [&](uint8_t* destination, size_t length) {
+        const auto got = readUpTo(destination, length);
+        if (got && *got != length) readError = "Truncated tar data";
+        return got && *got == length;
     };
 
     std::vector<TarEntry> entries;
@@ -258,31 +261,20 @@ TarReader::ReadResult TarReader::readGzipFile(const std::filesystem::path& path,
     int zeroBlocks = 0;
 
     while (true) {
-        if (!readBytes(header.data(), header.size(), true)) break;
-        if (atEof) break;
+        const auto got = readUpTo(header.data(), header.size());
+        if (!got || *got == 0) break;
+        if (*got != header.size()) {
+            readError = "Truncated tar data";
+            break;
+        }
 
         if (isZeroBlock(header.data())) {
             if (++zeroBlocks >= 2) {
                 // Drain to the gzip trailer so CRC errors and an oversized
                 // trailing stream cannot be accepted after the tar end marker.
-                while (true) {
-                    const int got = gzread(stream, scratch.data(),
-                                           static_cast<unsigned>(scratch.size()));
-                    if (got < 0) {
-                        int zlibCode = Z_OK;
-                        const char* detail = gzerror(stream, &zlibCode);
-                        readError = "Failed to decompress: " +
-                                    std::string(detail ? detail : "unknown zlib error");
-                        break;
-                    }
-                    if (got == 0) break;
-                    if (static_cast<size_t>(got) > maxOutputSize - outputBytes) {
-                        readError = "Decompressed size exceeds limit of " +
-                                    std::to_string(maxOutputSize) + " bytes";
-                        break;
-                    }
-                    outputBytes += static_cast<size_t>(got);
-                }
+                std::optional<size_t> drained;
+                while ((drained = readUpTo(scratch.data(), scratch.size())) &&
+                       *drained == scratch.size()) {}
                 break;
             }
             continue;
@@ -302,11 +294,20 @@ TarReader::ReadResult TarReader::readGzipFile(const std::filesystem::path& path,
                             std::to_string(maxOutputSize) + " bytes";
                 break;
             }
-            entry.data.resize(static_cast<size_t>(info->size));
-            if (!readBytes(entry.data.data(), entry.data.size())) break;
+            // Allocate up front no more than the file could inflate to, so a
+            // header alone cannot claim a cap-sized buffer; grow past that.
+            const auto size = static_cast<size_t>(info->size);
+            size_t want = std::min(size, std::max(inflateBound, scratch.size()));
+            while (entry.data.size() < size) {
+                const size_t have = entry.data.size();
+                entry.data.resize(want);
+                if (!readExactly(entry.data.data() + have, want - have)) break;
+                want = std::min(size, want * 2);
+            }
+            if (!readError.empty()) break;
 
-            const size_t padding = (BLOCK_SIZE - (entry.data.size() % BLOCK_SIZE)) % BLOCK_SIZE;
-            if (padding && !readBytes(scratch.data(), padding)) break;
+            const size_t padding = (BLOCK_SIZE - (size % BLOCK_SIZE)) % BLOCK_SIZE;
+            if (padding && !readExactly(scratch.data(), padding)) break;
         }
         entries.push_back(std::move(entry));
     }
