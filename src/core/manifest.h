@@ -56,13 +56,17 @@ struct Dependency {
  */
 // An intent a package can service.
 //
-// NAME ONLY. The author's metadata.json may also describe the payload shape
-// (`provides[].params`), and the shell enforces that against the INSTALLED
-// metadata.json — but none of it is carried here. The manifest copy exists for
-// one question, asked before a package is installed: "which installable package
-// provides X?" That is answered by the name alone.
+// The name, and whether a basecamp:// link may reach it. The author's
+// metadata.json may also describe the payload shape (`provides[].params`), and
+// the shell enforces that against the INSTALLED metadata.json — but none of it
+// is carried here. The manifest copy answers questions asked before a package
+// is installed: "which installable package provides X?" and "may a link offer
+// to install it?".
 struct ProvidedIntent {
     std::string intent;
+    // `"web": true` in the author's entry. Only a real boolean true counts:
+    // "false" as a string would publish what its author withheld.
+    bool web = false;
 };
 
 class Manifest {

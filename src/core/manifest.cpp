@@ -230,6 +230,8 @@ std::optional<Manifest> Manifest::fromJson(const std::string& jsonStr) {
                 } else if (entry.is_object() && entry.contains("intent")
                            && entry["intent"].is_string()) {
                     p.intent = entry["intent"].get<std::string>();
+                    p.web = entry.contains("web") && entry["web"].is_boolean()
+                            && entry["web"].get<bool>();
                 } else {
                     continue;
                 }
@@ -316,15 +318,16 @@ std::string Manifest::toJson() const {
     if (!displayName.empty()) {
         j["display_name"] = displayName;
     }
-    // Objects rather than bare strings, even though `intent` is the only field.
-    // One shape on the wire, and adding a field later costs no shape change and
-    // no manifest version bump. A bare string on the way IN is normalised up to
-    // this form, so readers never see two shapes.
+    // Objects rather than bare strings: one shape on the wire, so `web` was
+    // added with no shape change and no manifest version bump. A bare string on
+    // the way IN is normalised up to this form, so readers never see two shapes.
+    // `web` is written only when true, so entries without it round-trip as before.
     if (!provides.empty()) {
         json providesArr = json::array();
         for (const auto& p : provides) {
             json entry = json::object();
             entry["intent"] = p.intent;
+            if (p.web) entry["web"] = true;
             providesArr.push_back(std::move(entry));
         }
         j["provides"] = std::move(providesArr);
