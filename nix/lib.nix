@@ -83,7 +83,9 @@ pkgs.stdenv.mkDerivation {
     # plain nm so this check never itself becomes the reason a build fails.
     nmbin="''${NM:-nm}"
     if [ -f $out/lib/liblgx.dll.a ] && command -v "$nmbin" >/dev/null 2>&1; then
-      if ! "$nmbin" $out/lib/liblgx.dll.a 2>/dev/null | grep -q "__imp_lgx_"; then
+      # Capture, don't pipe into grep -q: its early exit SIGPIPEs nm, and pipefail fails the gate.
+      nm_syms=$("$nmbin" $out/lib/liblgx.dll.a 2>/dev/null || true)
+      if [[ "$nm_syms" != *__imp_lgx_* ]]; then
         echo "ERROR: $out/lib/liblgx.dll.a exports no __imp_lgx_* symbols;" >&2
         echo "       it is probably lgx.exe's import library, not liblgx.dll's." >&2
         "$nmbin" $out/lib/liblgx.dll.a >&2 || true
