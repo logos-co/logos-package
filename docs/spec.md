@@ -85,7 +85,7 @@ The current manifest schema is `0.6.0`. It is a UTF-8 encoded JSON file with the
     "darwin-arm64": "path/to/main.dylib"
   },
   "provides": [
-    {"intent": "chat.group.open"}
+    {"intent": "chat.group.open", "web": true}
   ]
 }
 ```
@@ -155,19 +155,23 @@ separately by the installer's signature policy (see *Install-Time Verification (
 At `manifestVersion` `0.5.0`+, `provides` lists the **app-to-app intents** the package
 can service, e.g. `chat.group.open`. Each element is one of:
 
-- **Object** with `intent` (string, required) — the intent name.
+- **Object** with `intent` (string, required) — the intent name — and `web`
+  (boolean, optional) — `true` when the author published the intent to
+  `basecamp://` links. Only a JSON `true` counts; any other value, including the
+  string `"true"`, is read as absent.
 - **Plain string**, accepted on read and equivalent to `{"intent": <string>}`.
 
 Entries are **normalized to the object form on write**, so a reader never sees two
-shapes. Entries that are neither a string nor an object carrying a string `intent`,
+shapes; `web` is written only when `true`. Entries that are neither a string nor an object carrying a string `intent`,
 and entries whose `intent` is empty, are skipped rather than failing the parse. The
 array is copied from the reference package by `lgx merge`, so a multi-variant package
 keeps the capability claim of the variants it was built from.
 
-**Names only.** The author's `metadata.json` may also describe each intent's payload
-shape (`provides[].params`); none of that is carried here. The manifest copy exists to
-answer one question, asked *before* a package is installed: "which installable package
-provides X?" — which the name alone answers. The shell enforces the payload shape
+**Names and the web opt-in only.** The author's `metadata.json` may also describe each
+intent's payload shape (`provides[].params`); none of that is carried here. The manifest
+copy exists to answer questions asked *before* a package is installed: "which
+installable package provides X?" and "may a link offer to install it?" — which the
+name and `web` answer. The shell enforces the payload shape
 against the installed `metadata.json`, which stays the source of truth for it.
 
 **Why the signed manifest rather than only `metadata.json`.** `metadata.json` is

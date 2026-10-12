@@ -373,6 +373,76 @@ TEST(ManifestTest, Provides_KeepsOnlyTheNameNotTheParamShape) {
     EXPECT_EQ(out.find("\"params\""), std::string::npos);
 }
 
+TEST(ManifestTest, Provides_KeepsTheWebOptIn) {
+    // `"web": true` lets a basecamp:// link reach the install offer for a
+    // package that is not installed. The catalog copies this manifest, so the
+    // flag has to survive every rewrite — `lgx add` loads and re-saves it.
+    std::string json = R"({
+      "manifestVersion": "0.5.0",
+      "name": "forum_ui",
+      "version": "1.0.0",
+      "description": "",
+      "author": "",
+      "type": "ui_qml",
+      "category": "",
+      "icon": "",
+      "view": "Main.qml",
+      "dependencies": [],
+      "provides": [
+        {"intent": "forum.open", "web": true},
+        {"intent": "forum.post"},
+        {"intent": "forum.admin", "web": "true"},
+        {"intent": "forum.mod", "web": false},
+        "forum.legacy"
+      ]
+    })";
+
+    auto m = Manifest::fromJson(json);
+    ASSERT_TRUE(m.has_value());
+    ASSERT_EQ(m->provides.size(), 5u);
+    EXPECT_TRUE(m->provides[0].web);
+    EXPECT_FALSE(m->provides[1].web);
+    EXPECT_FALSE(m->provides[2].web);   // a string is not an opt-in
+    EXPECT_FALSE(m->provides[3].web);
+    EXPECT_FALSE(m->provides[4].web);   // a bare name never is
+
+    auto round = Manifest::fromJson(m->toJson());
+    ASSERT_TRUE(round.has_value());
+    ASSERT_EQ(round->provides.size(), 5u);
+    EXPECT_EQ(round->provides[0].intent, "forum.open");
+    EXPECT_TRUE(round->provides[0].web);
+    for (size_t i = 1; i < round->provides.size(); ++i)
+        EXPECT_FALSE(round->provides[i].web) << round->provides[i].intent;
+
+    // Written only when true: one `"web"` key in the output.
+    const std::string out = m->toJson();
+    const auto first = out.find("\"web\"");
+    ASSERT_NE(first, std::string::npos);
+    EXPECT_EQ(out.find("\"web\"", first + 1), std::string::npos);
+}
+
+TEST(ManifestTest, Provides_WebSurvivesAFieldByFieldCopy) {
+    auto ref = Manifest::fromJson(R"({
+      "manifestVersion": "0.5.0",
+      "name": "forum_ui",
+      "version": "1.0.0",
+      "description": "",
+      "author": "",
+      "type": "ui_qml",
+      "category": "",
+      "icon": "",
+      "view": "Main.qml",
+      "dependencies": [],
+      "provides": [{"intent": "forum.open", "web": true}]
+    })");
+    ASSERT_TRUE(ref.has_value());
+
+    Manifest merged;
+    merged.provides = ref->provides;
+    ASSERT_EQ(merged.provides.size(), 1u);
+    EXPECT_TRUE(merged.provides[0].web);
+}
+
 TEST(ManifestTest, ToJson_OmitsProvidesWhenUnset) {
     auto manifest = Manifest::fromJson(VALID_MANIFEST_JSON);
     ASSERT_TRUE(manifest.has_value());
