@@ -115,7 +115,7 @@ All fields except `display_name`, `provides`, `optional_dependencies` and `inter
 
 These are the two things a module can name that are **not** part of a complete install.
 
-`optional_dependencies` entries take the same two forms as `dependencies` and are validated the same way. What differs is what an installer must do with them: it **may** offer to install one, and it **must not** report the package as broken when one is missing. The runtime never auto-loads them and never fails a load over their absence.
+`optional_dependencies` entries take the same two forms as `dependencies` and are validated the same way. What differs is what an installer must do with them: it **may** offer to install one, and it **must not** report the package as broken when one is missing. A runtime may load an installed one alongside the package, and never fails a load over one's absence or failure.
 
 `interface_dependencies` entries are bare **names**. An interface is bound to a concrete provider at runtime by the consuming module, so there is nothing here for an installer to resolve — the names are carried so a catalog or UI can show what a module expects to find. The author's `metadata.json` form is an object carrying `file` / `input` / `impl_class`; those are paths into flake inputs and a source tree and are dropped at bundle time, exactly as intent `params` are (only intent names reach the manifest). A manifest that carries the object form is rejected rather than silently truncated.
 
