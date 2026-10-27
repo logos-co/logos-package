@@ -82,8 +82,10 @@ public:
     // are additive and older readers ignore them, but widening 0.5.0 in place
     // would leave two documents claiming one version with different key sets,
     // which is a failure this workspace has already paid for once.
-    // 0.2.x-0.5.x manifests are still readable.
-    static constexpr const char* CURRENT_VERSION = "0.6.0";
+    //
+    // 0.7.0 adds `backend`: the core module a ui_qml app's backend runs as.
+    // 0.2.x-0.6.x manifests are still readable.
+    static constexpr const char* CURRENT_VERSION = "0.7.0";
 
     // Canonical in-package icon location for 0.4.0+. The author's
     // metadata.json path stays free-form; the bundler normalises to this.
@@ -171,6 +173,12 @@ public:
     // Required for type == "ui_qml" (enforced by validate()); empty for
     // other package types.
     std::string view;
+
+    // ui_qml only, 0.7.0+: the name of the core module the app's backend runs
+    // as, shipped inside this package. A shell registers and loads it when the
+    // app opens and unloads it when the app closes. Empty for QML-only apps and
+    // for apps whose backend runs in ui-host.
+    std::string backend;
     
     /**
      * Create a new empty manifest with default version.

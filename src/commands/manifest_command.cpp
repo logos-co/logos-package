@@ -70,6 +70,9 @@ void printHumanReadable(const Package& pkg) {
     if (!m.view.empty()) {
         std::cout << "View:           " << m.view << "\n";
     }
+    if (!m.backend.empty()) {
+        std::cout << "Backend:        " << m.backend << "\n";
+    }
 
     auto rootIt = m.hashes.find("root");
     if (rootIt != m.hashes.end()) {

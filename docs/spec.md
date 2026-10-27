@@ -63,11 +63,11 @@ the package Merkle tree like every other file.
 
 ### Manifest Schema
 
-The current manifest schema is `0.6.0`. It is a UTF-8 encoded JSON file with the following required fields:
+The current manifest schema is `0.7.0`. It is a UTF-8 encoded JSON file with the following required fields:
 
 ```json
 {
-  "manifestVersion": "0.6.0",
+  "manifestVersion": "0.7.0",
   "name": "package-name",
   "version": "1.2.3",
   "description": "Package description",
@@ -107,9 +107,10 @@ The current manifest schema is `0.6.0`. It is a UTF-8 encoded JSON file with the
 | `interface_dependencies` | array of strings | *Optional, 0.6.0+.* Interface **names** the module binds to a provider at runtime. Not resolvable to a package | Display/discovery |
 | `main` | object | Map of variant name → relative path to entry point (e.g ) `"linux-amd64": "path/to/main.so"` means `linux-amd64/path/to/main.so` | Entry point resolution |
 | `display_name` | string | *Optional.* Human-readable label shown by UI consumers (Package Manager, App Manager) and CLI tools (`lm metadata`, `lgx manifest`). Falls back to `name` when absent. | Display/branding |
+| `backend` | string | *Optional, 0.7.0+, `ui_qml` only.* Lowercase name of the core module the app's backend runs as, shipped in this package. A shell loads it when the app opens and unloads it when the app closes. Absent ⇒ a QML-only app, or a backend that runs in `ui-host` | Runtime needs |
 | `provides` | array | *Optional.* Intents this package can service — see *Provided intents* below. Absent ⇒ the package services none. | Capability discovery |
 
-All fields except `display_name`, `provides`, `optional_dependencies` and `interface_dependencies` are required to ensure consistent metadata for hosts/registries and applications. Each of those is omitted entirely when empty, so a package that uses none of them serialises exactly as earlier tooling produced it.
+All fields except `display_name`, `provides`, `optional_dependencies`, `interface_dependencies` and `backend` are required to ensure consistent metadata for hosts/registries and applications. Each of those is omitted entirely when empty, so a package that uses none of them serialises exactly as earlier tooling produced it.
 
 #### Optional and interface dependencies
 
@@ -187,8 +188,8 @@ against a registry nor checks that the payload implements them.
 
 #### Schema version compatibility
 
-Tooling reads `manifestVersion` `0.2.x` through `0.6.x`; packages produced by `lgx create`
-use `0.6.0`. Every field added across those versions is **optional**, so compatibility runs
+Tooling reads `manifestVersion` `0.2.x` through `0.7.x`; packages produced by `lgx create`
+use `0.7.0`. Every field added across those versions is **optional**, so compatibility runs
 both ways: an older client reading a newer manifest ignores what it does not recognize
 rather than failing, which is why the check is on the major version alone. A 0.2.0 manifest
 with plain-string dependencies round-trips unchanged through tooling — strings are emitted
@@ -196,7 +197,7 @@ as strings, object-form entries are emitted as objects. Two contracts are gated 
 version rather than applied retroactively: the *icon contract* (`0.4.0`+) and `provides`
 (`0.5.0`+). `0.6.0` adds `optional_dependencies` and `interface_dependencies`; the version
 was bumped rather than widening `0.5.0` in place, because two documents claiming one version
-with different key sets is a distinction nothing downstream can recover. Bumping the major
+with different key sets is a distinction nothing downstream can recover. `0.7.0` adds `backend`. Bumping the major
 version (1.x.x) is reserved for future breaking changes.
 
 ### Icon Contract
@@ -525,7 +526,7 @@ lgx merge <pkg1.lgx> <pkg2.lgx> ... [-o <output.lgx>] [--skip-duplicates] [-y]
 1. Verify all input package files exist; if any missing, exit with error
 2. Load all input packages
 3. Compare manifests across all inputs, ignoring the `main` field (which is variant-specific):
-   - All non-variant fields must be identical (`manifestVersion`, `name`, `version`, `description`, `author`, `type`, `category`, `icon`, `dependencies`, `optional_dependencies`, `interface_dependencies`, `display_name`). Two builds that disagree about what a package can call are not two variants of one package
+   - All non-variant fields must be identical (`manifestVersion`, `name`, `version`, `description`, `author`, `type`, `category`, `icon`, `dependencies`, `optional_dependencies`, `interface_dependencies`, `display_name`, `backend`). Two builds that disagree about what a package can call are not two variants of one package
    - If any mismatch is found, report all mismatching fields and exit with error
 4. Check for duplicate variants across all input packages:
    - By default, exit with error if any variant appears in more than one input

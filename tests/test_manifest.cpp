@@ -1465,3 +1465,69 @@ TEST(ManifestOptionalDepsTest, CompareMetadataCatchesAMismatch) {
     c->interfaceDependencies.clear();
     EXPECT_FALSE(a->compareMetadata(*c).valid);
 }
+
+// =============================================================================
+// backend (manifestVersion 0.7.0)
+// =============================================================================
+
+static const char* UI_QML_WITH_BACKEND = R"({
+  "manifestVersion": "0.7.0", "name": "counter_ui", "version": "1.0.0",
+  "description": "", "author": "", "type": "ui_qml", "category": "test",
+  "icon": "assets/icon.png", "dependencies": [],
+  "view": "qml/Main.qml", "backend": "counter_ui_backend",
+  "main": {"linux-amd64": "counter_ui_backend_plugin.so"}
+})";
+
+// The bundler writes `backend` into manifest.json BEFORE `lgx add`, which parses
+// and re-serialises the manifest: an unknown key would be dropped there.
+TEST(ManifestBackendTest, RoundTripsThroughJson) {
+    auto m = Manifest::fromJson(UI_QML_WITH_BACKEND);
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->backend, "counter_ui_backend");
+    EXPECT_TRUE(m->validate().valid);
+
+    auto again = Manifest::fromJson(m->toJson());
+    ASSERT_TRUE(again.has_value());
+    EXPECT_EQ(again->backend, "counter_ui_backend");
+}
+
+TEST(ManifestBackendTest, AbsentKeyIsNotEmitted) {
+    auto m = Manifest::fromJson(VALID_MANIFEST_JSON);
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->toJson().find("backend"), std::string::npos);
+}
+
+TEST(ManifestBackendTest, NonStringIsRejected) {
+    std::string json = UI_QML_WITH_BACKEND;
+    json.replace(json.find("\"counter_ui_backend\""),
+                 std::string("\"counter_ui_backend\"").size(), "true");
+    EXPECT_FALSE(Manifest::fromJson(json).has_value());
+}
+
+TEST(ManifestBackendTest, OnlyValidForUiQml) {
+    auto m = Manifest::fromJson(UI_QML_WITH_BACKEND);
+    ASSERT_TRUE(m.has_value());
+    m->type = "core";
+    m->view.clear();
+    auto result = m->validate();
+    EXPECT_FALSE(result.valid);
+    ASSERT_FALSE(result.errors.empty());
+    EXPECT_NE(result.errors[0].find("backend"), std::string::npos);
+}
+
+TEST(ManifestBackendTest, MustBeLowercase) {
+    auto m = Manifest::fromJson(UI_QML_WITH_BACKEND);
+    ASSERT_TRUE(m.has_value());
+    m->backend = "Counter_UI_Backend";
+    EXPECT_FALSE(m->validate().valid);
+}
+
+TEST(ManifestBackendTest, CompareMetadataCatchesAMismatch) {
+    auto a = Manifest::fromJson(UI_QML_WITH_BACKEND);
+    auto b = Manifest::fromJson(UI_QML_WITH_BACKEND);
+    ASSERT_TRUE(a.has_value() && b.has_value());
+    EXPECT_TRUE(a->compareMetadata(*b).valid);
+
+    b->backend.clear();
+    EXPECT_FALSE(a->compareMetadata(*b).valid);
+}

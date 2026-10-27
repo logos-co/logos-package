@@ -141,6 +141,7 @@ int MergeCommand::execute(const std::vector<std::string>& args) {
     mergedManifest.category = refManifest.category;
     mergedManifest.icon = refManifest.icon;
     mergedManifest.view = refManifest.view;
+    mergedManifest.backend = refManifest.backend;
     mergedManifest.dependencies = refManifest.dependencies;
     mergedManifest.provides = refManifest.provides;
     mergedManifest.optionalDependencies = refManifest.optionalDependencies;
