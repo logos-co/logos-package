@@ -216,6 +216,15 @@ std::optional<Manifest> Manifest::fromJson(const std::string& jsonStr) {
             m.view = j["view"].get<std::string>();
         }
 
+        // "backend" — optional, 0.7.0+, ui_qml only (enforced in validate()).
+        if (j.contains("backend")) {
+            if (!j["backend"].is_string()) {
+                lastError_ = "Invalid 'backend' field (must be a string)";
+                return std::nullopt;
+            }
+            m.backend = j["backend"].get<std::string>();
+        }
+
         // "provides" — optional. Accepts both the object form used in the
         // author's metadata.json ([{"intent": "a.b"}]) and a bare string array,
         if (j.contains("provides")) {
@@ -315,6 +324,9 @@ std::string Manifest::toJson() const {
     if (!view.empty()) {
         j["view"] = view;
     }
+    if (!backend.empty()) {
+        j["backend"] = backend;
+    }
     if (!displayName.empty()) {
         j["display_name"] = displayName;
     }
@@ -390,6 +402,16 @@ Manifest::ValidationResult Manifest::validate() const {
     // packages must remain valid here.
     if (type == "ui_qml" && view.empty()) {
         result.addError("'view' field is required for ui_qml packages");
+    }
+
+    if (!backend.empty()) {
+        if (type != "ui_qml") {
+            result.addError("'backend' is only valid for ui_qml packages");
+        }
+        // A module name: the shell registers it with the core under this name.
+        if (backend != PathNormalizer::toLowercase(backend)) {
+            result.addError("'backend' '" + backend + "' is not lowercase");
+        }
     }
 
     // Validate dependency entries
@@ -500,7 +522,8 @@ bool Manifest::isVersionSupported(const std::string& version) {
     // Currently only major version 0 is supported. Within 0.x we accept
     // 0.2.* (legacy plain-string dependencies), 0.3.* (richer dependencies
     // with optional version range + signer DID), 0.4.* (root-level assets/
-    // slot) and 0.5.* (`provides`); see the Dependency parsing in fromJson()
+    // slot), 0.5.* (`provides`), 0.6.* (optional/interface dependencies) and
+    // 0.7.* (`backend`); see the Dependency parsing in fromJson()
     // for the compatibility shim and requiresIconContract() for the icon gate.
     // Every addition so far has been an OPTIONAL field, so an older client
     // reading a newer manifest ignores what it does not know rather than
@@ -559,6 +582,8 @@ Manifest::ValidationResult Manifest::compareMetadata(const Manifest& other) cons
         result.addError("interface_dependencies differ");
     if (type == "ui_qml" && other.type == "ui_qml" && view != other.view)
         result.addError("view: '" + view + "' vs '" + other.view + "'");
+    if (backend != other.backend)
+        result.addError("backend: '" + backend + "' vs '" + other.backend + "'");
     if (displayName != other.displayName)
         result.addError("display_name: '" + displayName + "' vs '" + other.displayName + "'");
 
