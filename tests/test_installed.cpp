@@ -132,6 +132,16 @@ TEST_F(InstalledTest, InstallerSidecarsAreNotHashed) {
               InstalledIntegrity::Ok);
 }
 
+// lgpm records where a package was downloaded from in `.lgpm-source`.
+TEST_F(InstalledTest, TheInstallSourceSidecarIsNotHashed) {
+    auto pkg = makeCorePackage();
+    fs::path dir = install(pkg, "linux-amd64");
+    writeFile(dir / ".lgpm-source", "https://example.org/repo\n");
+
+    EXPECT_EQ(verifyInstalledTree(dir, pkg.getManifest(), "linux-amd64"),
+              InstalledIntegrity::Ok);
+}
+
 // ...but only at the top level. A payload file that happens to be called
 // manifest.json is content.
 TEST_F(InstalledTest, ANestedManifestJsonIsHashed) {
