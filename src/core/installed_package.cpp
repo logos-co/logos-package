@@ -15,7 +15,8 @@ namespace fs = std::filesystem;
 const std::set<std::string> INSTALL_SIDECAR_FILES = {
     "manifest.json",
     "manifest.sig",
-    "variant"
+    "variant",
+    ".lgpm-source"
 };
 
 namespace {
