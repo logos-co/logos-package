@@ -5,9 +5,11 @@
 #include "core/package.h"
 #include "crypto/signing.h"
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "test_png.h"
@@ -195,6 +197,29 @@ TEST_F(InstalledTest, AnAlteredByteDeepInALargeFileIsRejected) {
         EXPECT_EQ(verifyInstalledTree(dir, reloaded->getManifest(), "linux-amd64"),
                   InstalledIntegrity::Mismatch) << "byte " << at;
     }
+}
+
+// Basecamp checks installed packages from several threads at once: every
+// concurrent check of an untouched install must find it intact.
+TEST_F(InstalledTest, ChecksFromManyThreadsAtOnceAgree) {
+    auto pkg = makeCorePackage();
+    fs::path dir = install(pkg, "linux-amd64");
+
+    std::atomic<bool> go{false};
+    std::atomic<int> notOk{0};
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 8; ++i) {
+        threads.emplace_back([&] {
+            while (!go.load()) {}
+            if (verifyInstalledTree(dir, pkg.getManifest(), "linux-amd64") !=
+                InstalledIntegrity::Ok) {
+                ++notOk;
+            }
+        });
+    }
+    go = true;
+    for (auto& t : threads) t.join();
+    EXPECT_EQ(notOk.load(), 0);
 }
 
 TEST_F(InstalledTest, AnExtraFileIsRejected) {

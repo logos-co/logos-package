@@ -3,8 +3,11 @@
 #include "crypto/manifest_sig.h"
 #include "crypto/keyring.h"
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <thread>
+#include <vector>
 
 using namespace lgx;
 using namespace lgx::crypto;
@@ -58,6 +61,25 @@ TEST_F(Sha256FileTest, MatchesTheInMemoryHashAcrossChunkBoundaries) {
 
 TEST_F(Sha256FileTest, AMissingFileHasNoDigest) {
     EXPECT_EQ(sha256FileHex(tempDir / "nowhere"), std::nullopt);
+}
+
+// liblgx is called from several threads at once -- Basecamp checks installed
+// packages concurrently -- so its one-time setup must be thread-safe. The
+// thread-sanitizer check is what catches a race here; a plain run can only see
+// that every caller got success.
+TEST(CryptoTest, InitFromManyThreadsAtOnce) {
+    std::atomic<bool> go{false};
+    std::atomic<int> failed{0};
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 8; ++i) {
+        threads.emplace_back([&] {
+            while (!go.load()) {}
+            if (!init()) ++failed;
+        });
+    }
+    go = true;
+    for (auto& t : threads) t.join();
+    EXPECT_EQ(failed.load(), 0);
 }
 
 // =============================================================================

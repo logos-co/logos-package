@@ -32,7 +32,7 @@ struct KeyPair {
 
 /**
  * Initialize libsodium. Must be called before any other crypto functions.
- * Safe to call multiple times.
+ * Safe to call multiple times, from any thread.
  * @return true on success
  */
 bool init();

@@ -25,3 +25,10 @@ jobs:
       # its last 25 lines, which hides the first compiler error -- the only one
       # that usually matters.
       run: nix build -L
+
+    - name: Concurrency tests under ThreadSanitizer
+      # TSan from GCC 14 cannot map its shadow memory with the 32 bits of mmap
+      # randomisation newer kernels default to; 28 is what it supports.
+      run: |
+        sudo sysctl -w vm.mmap_rnd_bits=28
+        nix build -L .#checks.x86_64-linux.thread-sanitizer
