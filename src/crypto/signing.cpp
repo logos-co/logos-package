@@ -12,12 +12,8 @@ namespace lgx {
 namespace crypto {
 
 bool init() {
-    static bool initialized = false;
-    static bool success = false;
-    if (!initialized) {
-        success = (sodium_init() >= 0);
-        initialized = true;
-    }
+    // A function-local static is initialised once, safely from any thread.
+    static const bool success = sodium_init() >= 0;
     return success;
 }
 

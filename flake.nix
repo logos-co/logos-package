@@ -67,6 +67,9 @@
           src = ./.;
         in {
           tests = import ./nix/all.nix { inherit pkgs common src; };
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          # Linux only: where CI runs it, and the only place it has been tried.
+          thread-sanitizer = import ./nix/thread-sanitizer.nix { inherit pkgs common src; };
         }
       );
 
