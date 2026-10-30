@@ -3,6 +3,7 @@
 
 #include <sodium.h>
 #include <algorithm>
+#include <fstream>
 #include <sstream>
 #include <iomanip>
 #include <set>
@@ -50,17 +51,44 @@ std::string sha256Hex(const std::vector<uint8_t>& data) {
     return sha256Hex(data.data(), data.size());
 }
 
+namespace {
+
+std::string toHex(const unsigned char* bytes, size_t len) {
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+    for (size_t i = 0; i < len; ++i) {
+        oss << std::setw(2) << static_cast<unsigned>(bytes[i]);
+    }
+    return oss.str();
+}
+
+} // namespace
+
 std::string sha256Hex(const uint8_t* data, size_t len) {
     init();
     unsigned char hash[crypto_hash_sha256_BYTES];
     crypto_hash_sha256(hash, data, len);
+    return toHex(hash, sizeof hash);
+}
 
-    std::ostringstream oss;
-    oss << std::hex << std::setfill('0');
-    for (size_t i = 0; i < crypto_hash_sha256_BYTES; ++i) {
-        oss << std::setw(2) << static_cast<unsigned>(hash[i]);
+std::optional<std::string> sha256FileHex(const std::filesystem::path& path) {
+    if (!init()) return std::nullopt;
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return std::nullopt;
+
+    crypto_hash_sha256_state state;
+    crypto_hash_sha256_init(&state);
+    std::vector<char> chunk(1 << 20);
+    while (f.read(chunk.data(), static_cast<std::streamsize>(chunk.size())) || f.gcount() > 0) {
+        crypto_hash_sha256_update(&state,
+            reinterpret_cast<const unsigned char*>(chunk.data()),
+            static_cast<unsigned long long>(f.gcount()));
     }
-    return oss.str();
+    if (f.bad()) return std::nullopt;
+
+    unsigned char hash[crypto_hash_sha256_BYTES];
+    crypto_hash_sha256_final(&state, hash);
+    return toHex(hash, sizeof hash);
 }
 
 std::string base64Encode(const uint8_t* data, size_t len) {

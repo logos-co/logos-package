@@ -79,12 +79,12 @@ WalkResult collectListing(const fs::path& dir, Listing& out, std::string& error)
             return WalkResult::NotFromAPackage;
         }
         if (!INSTALL_SIDECAR_FILES.count(rel)) {
-            std::vector<uint8_t> bytes;
-            if (!readFileBytes(path, bytes)) {
+            auto hash = crypto::sha256FileHex(path);
+            if (!hash) {
                 error = "Cannot read installed file: " + path.string();
                 return WalkResult::Unreadable;
             }
-            out.files.emplace_back(rel, crypto::sha256Hex(bytes));
+            out.files.emplace_back(rel, std::move(*hash));
         }
 
         it.increment(ec);

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
@@ -69,6 +70,13 @@ std::string sha256Hex(const std::vector<uint8_t>& data);
  * Compute SHA-256 hash and return as hex string from raw pointer.
  */
 std::string sha256Hex(const uint8_t* data, size_t len);
+
+/**
+ * SHA-256 of a file's contents as a hex string, read in fixed-size chunks so
+ * a large file is never held in memory whole.
+ * @return hex digest, or nullopt if the file cannot be read
+ */
+std::optional<std::string> sha256FileHex(const std::filesystem::path& path);
 
 /**
  * Base64 encode raw bytes.

@@ -167,6 +167,36 @@ TEST_F(InstalledTest, AnAlteredPayloadFileIsRejected) {
     EXPECT_TRUE(hasError(result, "Content hash mismatch")) << joinErrors(result);
 }
 
+// Installed files are hashed in 1 MiB chunks: a change past the first chunk,
+// and one in the last, partial chunk, must still be seen.
+TEST_F(InstalledTest, AnAlteredByteDeepInALargeFileIsRejected) {
+    fs::path pkgPath = tempDir / "big.lgx";
+    ASSERT_TRUE(Package::create(pkgPath, "bigpkg").success);
+    auto pkg = Package::load(pkgPath);
+    ASSERT_TRUE(pkg.has_value());
+
+    std::string big(3 * (1 << 20) + 17, '\0');
+    for (size_t i = 0; i < big.size(); ++i) big[i] = static_cast<char>(i * 31 + 7);
+    fs::path payload = tempDir / "bigpayload";
+    writeFile(payload / "mod.so", big);
+    ASSERT_TRUE(pkg->addVariant("linux-amd64", payload, "mod.so").success);
+    ASSERT_TRUE(pkg->save(pkgPath).success);
+    auto reloaded = Package::load(pkgPath);
+    ASSERT_TRUE(reloaded.has_value());
+
+    fs::path dir = install(*reloaded, "linux-amd64");
+    EXPECT_EQ(verifyInstalledTree(dir, reloaded->getManifest(), "linux-amd64"),
+              InstalledIntegrity::Ok);
+
+    for (size_t at : {size_t(1) << 20, big.size() - 1}) {
+        std::string edited = big;
+        edited[at] = static_cast<char>(edited[at] ^ 1);
+        writeFile(dir / "mod.so", edited);
+        EXPECT_EQ(verifyInstalledTree(dir, reloaded->getManifest(), "linux-amd64"),
+                  InstalledIntegrity::Mismatch) << "byte " << at;
+    }
+}
+
 TEST_F(InstalledTest, AnExtraFileIsRejected) {
     auto pkg = makeCorePackage();
     fs::path dir = install(pkg, "linux-amd64");

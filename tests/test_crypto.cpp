@@ -11,6 +11,56 @@ using namespace lgx::crypto;
 namespace fs = std::filesystem;
 
 // =============================================================================
+// SHA-256 of a file
+// =============================================================================
+
+class Sha256FileTest : public ::testing::Test {
+protected:
+    fs::path tempDir;
+
+    void SetUp() override {
+        tempDir = fs::temp_directory_path() / ("lgx_sha256_" + std::to_string(::rand()));
+        fs::create_directories(tempDir);
+    }
+
+    void TearDown() override {
+        std::error_code ec;
+        fs::remove_all(tempDir, ec);
+    }
+
+    fs::path write(const std::string& name, const std::string& bytes) {
+        fs::path p = tempDir / name;
+        std::ofstream f(p, std::ios::binary);
+        f << bytes;
+        return p;
+    }
+};
+
+TEST_F(Sha256FileTest, KnownDigests) {
+    EXPECT_EQ(sha256FileHex(write("empty", "")),
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    EXPECT_EQ(sha256FileHex(write("abc", "abc")),
+              "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+}
+
+// Files are read in 1 MiB chunks; every size around a chunk boundary must hash
+// exactly as the whole buffer does.
+TEST_F(Sha256FileTest, MatchesTheInMemoryHashAcrossChunkBoundaries) {
+    const size_t mib = size_t(1) << 20;
+    for (size_t size : {size_t(1), mib - 1, mib, mib + 1, 2 * mib, 3 * mib + 17}) {
+        std::string bytes(size, '\0');
+        for (size_t i = 0; i < size; ++i) bytes[i] = static_cast<char>(i * 131 + size);
+        const auto* data = reinterpret_cast<const uint8_t*>(bytes.data());
+        EXPECT_EQ(sha256FileHex(write("f", bytes)), sha256Hex(data, bytes.size()))
+            << "size " << size;
+    }
+}
+
+TEST_F(Sha256FileTest, AMissingFileHasNoDigest) {
+    EXPECT_EQ(sha256FileHex(tempDir / "nowhere"), std::nullopt);
+}
+
+// =============================================================================
 // Base64url Encode/Decode Tests
 // =============================================================================
 
