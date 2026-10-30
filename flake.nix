@@ -2,7 +2,7 @@
   description = "lgx - Logos Package Manager CLI";
 
   inputs = {
-    logos-nix.url = "github:logos-co/logos-nix";
+    logos-nix.url = "github:logos-co/logos-nix/feat/standalone-apps";
     nixpkgs.follows = "logos-nix/nixpkgs";
   };
 
@@ -21,7 +21,13 @@
       # on the Linux build host, so a Windows "check" would assert nothing. And
       # a cross devShell would hand you a mingw compiler with no way to run what
       # it produces.
-      forAllTargets = logos-nix.lib.forAllTargets;
+      forAllTargets = f: logos-nix.lib.forAllTargets f // {
+        # liblgx on Android: ICU's C API from the platform (API 31+).
+        aarch64-android = f {
+          system = "aarch64-android";
+          inherit (logos-nix.lib.mobileTargets.aarch64-android) pkgs;
+        };
+      };
     in
     {
       packages = forAllTargets ({ pkgs, ... }:

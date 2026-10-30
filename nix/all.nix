@@ -15,7 +15,7 @@ pkgs.stdenv.mkDerivation {
       -GNinja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
-      -DLGX_BUILD_TESTS=${if common.isWindows then "OFF" else "ON"} \
+      -DLGX_BUILD_TESTS=${if common.canRunTests then "ON" else "OFF"} \
       -DLGX_BUILD_SHARED=ON \
       $cmakeFlags "''${cmakeFlagsArray[@]}"
 
@@ -76,7 +76,7 @@ pkgs.stdenv.mkDerivation {
   # Not under cross: ctest would have to execute PE binaries on the Linux build
   # host. The Windows test story is a native run on a real machine (or wine),
   # not a build-time check -- see the verification ladder.
-  doCheck = !common.isWindows;
+  doCheck = common.canRunTests;
   checkPhase = ''
     runHook preCheck
     

@@ -69,6 +69,9 @@ const VariantAliasCase kAliasCases[] = {
     { "windows-amd64",  "windows-x86_64"  },
     { "windows-arm64",  "windows-aarch64" },
     { "windows-aarch64","windows-arm64"   },
+    // iOS: the OS half of a simulator variant has a dash of its own.
+    { "ios-arm64",      "ios-aarch64"     },
+    { "ios-sim-arm64",  "ios-sim-aarch64" },
 };
 } // namespace
 
@@ -106,12 +109,16 @@ TEST(PlatformVariantTest, NoSpellingIsListedTwice) {
 // =============================================================================
 
 TEST(PlatformVariantTest, NeverAcceptsAnotherOperatingSystem) {
+    // An iOS device and its simulator are different operating systems here.
     const char* const hosts[] = { "darwin-x86_64", "darwin-arm64", "linux-x86_64",
-                                  "linux-arm64", "windows-x86_64" };
+                                  "linux-arm64", "windows-x86_64", "ios-arm64",
+                                  "ios-sim-arm64" };
     const char* const foreign[] = { "darwin-x86_64", "darwin-amd64", "darwin-arm64",
                                     "darwin-aarch64", "linux-x86_64", "linux-amd64",
                                     "linux-arm64", "linux-aarch64", "windows-x86_64",
-                                    "windows-amd64", "windows-arm64", "windows-aarch64" };
+                                    "windows-amd64", "windows-arm64", "windows-aarch64",
+                                    "ios-arm64", "ios-aarch64", "ios-sim-arm64",
+                                    "ios-sim-aarch64" };
     for (const char* host : hosts) {
         auto variants = variantSpellings(host);
         for (const char* f : foreign) {

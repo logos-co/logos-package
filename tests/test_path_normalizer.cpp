@@ -31,6 +31,32 @@ TEST(PathNormalizerTest, NFCNormalization_NFDtoNFC) {
     EXPECT_EQ(*result, nfc);
 }
 
+TEST(PathNormalizerTest, NFCNormalization_Empty) {
+    auto result = PathNormalizer::toNFC("");
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "");
+    EXPECT_TRUE(PathNormalizer::isNFC(""));
+    EXPECT_EQ(PathNormalizer::toLowercase(""), "");
+}
+
+TEST(PathNormalizerTest, NFCNormalization_IllFormedUtf8BecomesReplacement) {
+    // A lone continuation byte is substituted with U+FFFD, not rejected.
+    auto result = PathNormalizer::toNFC("a\x80z");
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "a\xEF\xBF\xBDz");
+}
+
+TEST(PathNormalizerTest, NFCNormalization_OneReplacementPerMaximalSubpart) {
+    // ICU's substitution, which the CoreFoundation build reproduces by hand.
+    const std::string r = "\xEF\xBF\xBD";
+    EXPECT_EQ(PathNormalizer::toNFC("a\xE2\x82z").value_or("?"), "a" + r + "z");  // truncated
+    EXPECT_EQ(PathNormalizer::toNFC("\xF0\x9F\x98").value_or("?"), r);            // truncated at end
+    EXPECT_EQ(PathNormalizer::toNFC("\xE0\x80\x80").value_or("?"), r + r + r);    // overlong
+    EXPECT_EQ(PathNormalizer::toNFC("\xED\xA0\x80").value_or("?"), r + r + r);    // surrogate
+    EXPECT_EQ(PathNormalizer::toNFC("\xF4\x90\x80\x80").value_or("?"), r + r + r + r);
+    EXPECT_EQ(PathNormalizer::toNFC("\xC0\xAF").value_or("?"), r + r);
+}
+
 TEST(PathNormalizerTest, IsNFC_True) {
     EXPECT_TRUE(PathNormalizer::isNFC("hello"));
     EXPECT_TRUE(PathNormalizer::isNFC("héllo"));  // NFC form
